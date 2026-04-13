@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Plus, MoreVertical, ChevronDown, X, Pencil, Trash2, Upload, ImageIcon } from 'lucide-react';
+import { Search, Plus, MoreVertical, ChevronDown, X, Pencil, Trash2, Upload, ImageIcon, ScanBarcode } from 'lucide-react';
 import { getProducts, addProduct, updateProduct, deleteProduct, subscribeProducts, type Product } from './data/products';
+import { BarcodeGeneratorModal, BarcodeDisplay, generateBarcodeNumber } from './BarcodeGenerator';
 
 const categories = ['All Categories', 'Shirts', 'Pants', 'Accessories'];
 const productCategories = ['Shirts', 'Pants', 'Accessories'];
@@ -27,6 +28,8 @@ export function InventoryView() {
   const [form, setForm] = useState(emptyForm);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [showBarcodeGenerator, setShowBarcodeGenerator] = useState(false);
+  const [barcodeForProduct, setBarcodeForProduct] = useState<Product | null>(null);
 
   useEffect(() => {
     return subscribeProducts(() => setProducts(getProducts()));
@@ -70,7 +73,7 @@ export function InventoryView() {
     if (!form.name.trim()) errors.name = 'Required';
     if (!form.price || isNaN(Number(form.price)) || Number(form.price) <= 0) errors.price = 'Enter a valid price';
     if (!form.costPrice || isNaN(Number(form.costPrice)) || Number(form.costPrice) <= 0) errors.costPrice = 'Enter a valid price';
-    if (!form.barcode.trim()) errors.barcode = 'Required';
+    // Barcode is no longer required — auto-generated if empty
     if (!form.stock || isNaN(Number(form.stock)) || Number(form.stock) < 0) errors.stock = 'Enter a valid number';
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
@@ -84,7 +87,7 @@ export function InventoryView() {
       costPrice: parseFloat(form.costPrice),
       category: form.category,
       image: form.image || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=400&h=400&fit=crop',
-      barcode: form.barcode.trim(),
+      barcode: form.barcode.trim() || generateBarcodeNumber(),
       sku: form.sku.trim() || `SKU-${Date.now().toString(36).toUpperCase()}`,
       variants: form.variants.trim() || '-',
       stock: parseInt(form.stock),
@@ -198,13 +201,20 @@ export function InventoryView() {
                     {openMenuId === item.id && (
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setOpenMenuId(null)} />
-                        <div className="absolute right-0 top-8 bg-card border border-border rounded-lg shadow-lg z-20 w-36 py-1">
+                        <div className="absolute right-0 top-8 bg-card border border-border rounded-lg shadow-lg z-20 w-44 py-1">
                           <button
                             onClick={() => openEdit(item)}
                             className="w-full px-4 py-2 text-left text-sm hover:bg-muted flex items-center gap-2"
                           >
                             <Pencil className="w-3.5 h-3.5" />
                             Edit
+                          </button>
+                          <button
+                            onClick={() => { setBarcodeForProduct(item); setOpenMenuId(null); }}
+                            className="w-full px-4 py-2 text-left text-sm hover:bg-muted flex items-center gap-2 text-primary"
+                          >
+                            <ScanBarcode className="w-3.5 h-3.5" />
+                            Barcode
                           </button>
                           <button
                             onClick={() => { setDeleteConfirmId(item.id); setOpenMenuId(null); }}
@@ -277,14 +287,29 @@ export function InventoryView() {
                   />
                 </div>
                 <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">Barcode *</label>
-                  <input
-                    value={form.barcode}
-                    onChange={(e) => updateField('barcode', e.target.value)}
-                    className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.barcode ? 'border-red-400' : 'border-border'}`}
-                    placeholder="e.g. 8901234567010"
-                  />
+                  <label className="text-sm text-muted-foreground mb-1 block">Barcode <span className="text-xs">(auto-generated if empty)</span></label>
+                  <div className="flex gap-2">
+                    <input
+                      value={form.barcode}
+                      onChange={(e) => updateField('barcode', e.target.value)}
+                      className={`flex-1 px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.barcode ? 'border-red-400' : 'border-border'}`}
+                      placeholder="Auto-generated if empty"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowBarcodeGenerator(true)}
+                      className="px-3 py-2.5 bg-primary/10 text-primary border border-primary/30 rounded-lg hover:bg-primary/20 transition-colors flex items-center gap-1.5 text-sm whitespace-nowrap"
+                    >
+                      <ScanBarcode className="w-4 h-4" />
+                      Generate
+                    </button>
+                  </div>
                   {formErrors.barcode && <p className="text-red-500 text-xs mt-1">{formErrors.barcode}</p>}
+                  {form.barcode && (
+                    <div className="mt-2 bg-white border border-border rounded-lg p-2 flex justify-center">
+                      <BarcodeDisplay value={form.barcode} width={1.5} height={40} />
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -439,6 +464,32 @@ export function InventoryView() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Barcode Generator Modal (from form) */}
+      {showBarcodeGenerator && (
+        <BarcodeGeneratorModal
+          initialValue={form.barcode || undefined}
+          productName={form.name || undefined}
+          onApply={(barcode) => {
+            updateField('barcode', barcode);
+            setShowBarcodeGenerator(false);
+          }}
+          onClose={() => setShowBarcodeGenerator(false)}
+        />
+      )}
+
+      {/* Barcode Generator Modal (from table action) */}
+      {barcodeForProduct && (
+        <BarcodeGeneratorModal
+          initialValue={barcodeForProduct.barcode}
+          productName={barcodeForProduct.name}
+          onApply={(barcode) => {
+            updateProduct({ ...barcodeForProduct, barcode });
+            setBarcodeForProduct(null);
+          }}
+          onClose={() => setBarcodeForProduct(null)}
+        />
       )}
     </div>
   );

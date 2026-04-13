@@ -4,6 +4,7 @@ import { POSView } from './components/POSView';
 import { ScannerView } from './components/ScannerView';
 import { InventoryView } from './components/InventoryView';
 import { CustomersView } from './components/CustomersView';
+import { SuppliersView } from './components/SuppliersView';
 import { ReportsView } from './components/ReportsView';
 import { SettingsView } from './components/SettingsView';
 
@@ -20,6 +21,8 @@ export default function App() {
         return <InventoryView />;
       case 'customers':
         return <CustomersView />;
+      case 'suppliers':
+        return <SuppliersView />;
       case 'reports':
         return <ReportsView />;
       case 'settings':
