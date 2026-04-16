@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Search, Plus, MoreVertical, ChevronDown, X, Pencil, Trash2, Upload, ImageIcon, ScanBarcode } from 'lucide-react';
 import { getProducts, addProduct, updateProduct, deleteProduct, subscribeProducts, type Product } from './data/products';
+import { getSuppliers, subscribeSuppliers } from './data/suppliers';
 import { BarcodeGeneratorModal, BarcodeDisplay, generateBarcodeNumber } from './BarcodeGenerator';
 
 const categories = ['All Categories', 'Shirts', 'Pants', 'Accessories'];
@@ -16,10 +17,87 @@ const emptyForm = {
   sku: '',
   variants: '',
   stock: '',
+  supplierId: '',
 };
+
+function SupplierSelect({ suppliers, value, onChange }: { suppliers: any[], value: string, onChange: (val: string) => void }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const sortedSuppliers = [...suppliers].sort((a, b) => a.name.localeCompare(b.name));
+  const filtered = sortedSuppliers.filter(s => 
+    s.name.toLowerCase().includes(search.toLowerCase()) || 
+    (s.company && s.company.toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const selectedSupplier = suppliers.find(s => s.id === value);
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <div 
+        className="w-full px-3 py-2.5 bg-input-background border border-border rounded-lg text-sm flex items-center justify-between cursor-pointer"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <span className={selectedSupplier ? 'text-foreground line-clamp-1' : 'text-muted-foreground'}>
+          {selectedSupplier ? `${selectedSupplier.name} ${selectedSupplier.company ? `(${selectedSupplier.company})` : ''}` : 'Select a Supplier...'}
+        </span>
+        <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+      </div>
+      
+      {isOpen && (
+        <div className="absolute z-50 w-full mt-1 bg-card border border-border rounded-lg shadow-lg flex flex-col">
+          <div className="p-2 border-b border-border relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 bg-input-background border border-border rounded-md text-sm outline-none focus:border-primary"
+              autoFocus
+            />
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            <div 
+              className="px-3 py-2 text-sm cursor-pointer hover:bg-muted text-muted-foreground"
+              onClick={() => { onChange(''); setIsOpen(false); setSearch(''); }}
+            >
+              No Supplier
+            </div>
+            {filtered.length === 0 ? (
+              <div className="px-3 py-3 text-sm text-muted-foreground text-center">No suppliers found</div>
+            ) : (
+              filtered.map(s => (
+                <div
+                  key={s.id}
+                  className={`px-3 py-2 text-sm cursor-pointer hover:bg-muted ${value === s.id ? 'bg-primary/10 text-primary font-medium' : ''}`}
+                  onClick={() => { onChange(s.id); setIsOpen(false); setSearch(''); }}
+                >
+                  <div className="truncate">{s.name} <span className="text-muted-foreground">{s.company ? `(${s.company})` : ''}</span></div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function InventoryView() {
   const [products, setProducts] = useState(getProducts);
+  const [suppliers, setSuppliers] = useState(getSuppliers);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All Categories');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -32,7 +110,12 @@ export function InventoryView() {
   const [barcodeForProduct, setBarcodeForProduct] = useState<Product | null>(null);
 
   useEffect(() => {
-    return subscribeProducts(() => setProducts(getProducts()));
+    const unsubProducts = subscribeProducts(() => setProducts(getProducts()));
+    const unsubSuppliers = subscribeSuppliers(() => setSuppliers(getSuppliers()));
+    return () => {
+      unsubProducts();
+      unsubSuppliers();
+    };
   }, []);
 
   const filteredInventory = products.filter((item) => {
@@ -61,6 +144,7 @@ export function InventoryView() {
       sku: product.sku,
       variants: product.variants,
       stock: product.stock.toString(),
+      supplierId: product.supplierId || '',
     });
     setFormErrors({});
     setEditingProduct(product);
@@ -91,6 +175,7 @@ export function InventoryView() {
       sku: form.sku.trim() || `SKU-${Date.now().toString(36).toUpperCase()}`,
       variants: form.variants.trim() || '-',
       stock: parseInt(form.stock),
+      supplierId: form.supplierId || undefined,
     };
     if (editingProduct) {
       updateProduct({ ...productData, id: editingProduct.id });
@@ -363,6 +448,14 @@ export function InventoryView() {
                     placeholder="0"
                   />
                   {formErrors.stock && <p className="text-red-500 text-xs mt-1">{formErrors.stock}</p>}
+                </div>
+                <div>
+                  <label className="text-sm text-muted-foreground mb-1 block">Supplier (Optional)</label>
+                  <SupplierSelect 
+                    suppliers={suppliers} 
+                    value={form.supplierId} 
+                    onChange={(val) => updateField('supplierId', val)} 
+                  />
                 </div>
               </div>
               <div>

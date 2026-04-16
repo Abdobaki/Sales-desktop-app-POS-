@@ -143,6 +143,20 @@ export function addPurchase(p: Omit<Purchase, 'id'>) {
   return newPurchase;
 }
 
+export function updatePurchase(updated: Purchase) {
+  const oldPurchase = _purchases.find((p) => p.id === updated.id);
+  if (oldPurchase) {
+    _suppliers = _suppliers.map((s) =>
+      s.id === updated.supplierId
+        ? { ...s, totalSpent: s.totalSpent - oldPurchase.totalPrice + updated.totalPrice }
+        : s
+    );
+  }
+  _purchases = _purchases.map((p) => (p.id === updated.id ? updated : p));
+  notifyPurchases();
+  notifySuppliers();
+}
+
 export function deletePurchase(id: string) {
   const purchase = _purchases.find((p) => p.id === id);
   if (purchase) {

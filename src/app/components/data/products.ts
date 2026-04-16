@@ -9,6 +9,7 @@ export type Product = {
   sku: string;
   variants: string;
   stock: number;
+  supplierId?: string;
 };
 
 let _products: Product[] = [

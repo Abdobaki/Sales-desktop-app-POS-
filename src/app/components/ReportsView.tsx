@@ -7,7 +7,7 @@ import {
 
 // Generate mock daily sales data for the last 90 days
 function generateSalesData() {
-  const data: { date: string; day: string; revenue: number; orders: number; items: number }[] = [];
+  const data: { date: string; day: string; revenue: number; profit: number; orders: number; items: number }[] = [];
   const today = new Date(2026, 3, 10); // April 10, 2026
   for (let i = 89; i >= 0; i--) {
     const d = new Date(today);
@@ -16,12 +16,14 @@ function generateSalesData() {
     const weekday = d.getDay();
     const multiplier = weekday === 0 || weekday === 6 ? 1.3 : 1;
     const revenue = Math.round(base * multiplier);
+    const profit = Math.round(revenue * (0.3 + Math.random() * 0.15));
     const orders = Math.round(revenue / 120 + Math.random() * 10);
     const items = Math.round(orders * (1.5 + Math.random()));
     data.push({
       date: d.toISOString().split('T')[0],
       day: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
       revenue,
+      profit,
       orders,
       items,
     });
@@ -262,6 +264,47 @@ export function ReportsView() {
               stroke="#0e7490"
               strokeWidth={2}
               fill="url(#salesGradient)"
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Profit Line Chart */}
+      <div className="bg-card border border-border rounded-lg p-6 mb-6">
+        <h3 className="mb-6">Profit Trend</h3>
+        <ResponsiveContainer width="100%" height={300}>
+          <AreaChart data={filteredData}>
+            <defs>
+              <linearGradient id="profitGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#16a34a" stopOpacity={0.15} />
+                <stop offset="95%" stopColor="#16a34a" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+            <XAxis
+              dataKey="date"
+              stroke="#64748b"
+              tickFormatter={(val: string) => {
+                const d = new Date(val + 'T00:00:00');
+                return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              }}
+              interval={filteredData.length > 14 ? Math.floor(filteredData.length / 7) : 0}
+            />
+            <YAxis stroke="#64748b" />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: '8px',
+              }}
+              formatter={(value: number) => [`$${value.toLocaleString()}`, 'Profit']}
+            />
+            <Area
+              type="monotone"
+              dataKey="profit"
+              stroke="#16a34a"
+              strokeWidth={2}
+              fill="url(#profitGradient)"
             />
           </AreaChart>
         </ResponsiveContainer>
