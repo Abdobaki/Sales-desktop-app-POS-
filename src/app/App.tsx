@@ -3,6 +3,7 @@ import { Sidebar } from './components/Sidebar';
 import { POSView } from './components/POSView';
 import { ScannerView } from './components/ScannerView';
 import { InventoryView } from './components/InventoryView';
+import { SeriesView } from './components/SeriesView';
 import { CustomersView } from './components/CustomersView';
 import { SuppliersView } from './components/SuppliersView';
 import { ReportsView } from './components/ReportsView';
@@ -19,6 +20,8 @@ export default function App() {
         return <ScannerView />;
       case 'inventory':
         return <InventoryView />;
+      case 'series':
+        return <SeriesView />;
       case 'customers':
         return <CustomersView />;
       case 'suppliers':
