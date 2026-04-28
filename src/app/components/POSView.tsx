@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Search, Plus, Minus, X, Printer, ScanBarcode, User, PackageOpen } from 'lucide-react';
+import { Search, Plus, Minus, X, Printer, ScanBarcode, User, PackageOpen, Pencil } from 'lucide-react';
 import { productCatalog, type Product } from './data/products';
 import { getSeries, findSerieByBoxBarcode, findSeriesByProductBarcode, sellSerieItem, subscribeSeries, getSerieRemainingCount, getSerieAvailableSizes, type Serie } from './data/series';
 import { type Customer } from './data/customers';
@@ -32,6 +32,9 @@ export function POSView() {
   // Serie choice dialog state
   const [serieChoice, setSerieChoice] = useState<{ series: Serie[]; productBarcode: string } | null>(null);
   const [sizePickSerie, setSizePickSerie] = useState<Serie | null>(null);
+  // Inline price editing state
+  const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
+  const [editPriceValue, setEditPriceValue] = useState('');
 
   useEffect(() => {
     const unsub = subscribeSeries(() => setSeries(getSeries()));
@@ -87,6 +90,22 @@ export function POSView() {
 
   const removeFromCart = (id: string) => {
     setCart((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const startEditPrice = (item: CartItem) => {
+    setEditingPriceId(item.id);
+    setEditPriceValue(item.price.toFixed(2));
+  };
+
+  const confirmEditPrice = (id: string) => {
+    const newPrice = parseFloat(editPriceValue);
+    if (!isNaN(newPrice) && newPrice >= 0) {
+      setCart((prev) =>
+        prev.map((item) => item.id === id ? { ...item, price: newPrice } : item)
+      );
+    }
+    setEditingPriceId(null);
+    setEditPriceValue('');
   };
 
   const filteredProducts = productCatalog.filter((product) => {
@@ -334,7 +353,24 @@ export function POSView() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="mb-1 text-sm">{item.name}</div>
-                    <div className="text-sm text-muted-foreground">${item.price.toFixed(2)}</div>
+                    {editingPriceId === item.id ? (
+                      <form onSubmit={(e) => { e.preventDefault(); confirmEditPrice(item.id); }} className="flex items-center gap-1.5">
+                        <span className="text-sm text-muted-foreground">$</span>
+                        <input
+                          type="number" step="0.01" min="0"
+                          value={editPriceValue}
+                          onChange={(e) => setEditPriceValue(e.target.value)}
+                          onBlur={() => confirmEditPrice(item.id)}
+                          autoFocus
+                          className="w-24 px-2 py-1 text-sm border border-primary rounded-md bg-primary/5 focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                      </form>
+                    ) : (
+                      <button onClick={() => startEditPrice(item)} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary transition-colors group">
+                        <span>${item.price.toFixed(2)}</span>
+                        <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </button>
+                    )}
                     {item.type === 'product' && (
                       <div className="flex items-center gap-2 mt-2">
                         <button onClick={() => updateQuantity(item.id, -1)} className="w-8 h-8 rounded bg-secondary hover:bg-muted flex items-center justify-center"><Minus className="w-4 h-4" /></button>
