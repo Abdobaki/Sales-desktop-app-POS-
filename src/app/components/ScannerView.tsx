@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { ScanBarcode, Plus, Minus, X, Printer, Trash2, CheckCircle2, AlertCircle, User, PackageOpen, Pencil } from 'lucide-react';
-import { productCatalog, type Product } from './data/products';
+import { productCatalog, getProducts, subscribeProducts, type Product } from './data/products';
 import { getSeries, findSerieByBoxBarcode, findSeriesByProductBarcode, sellSerieItem, subscribeSeries, getSerieRemainingCount, getSerieAvailableSizes, type Serie } from './data/series';
 import { type Customer } from './data/customers';
 import { CustomerPicker } from './CustomerPicker';
@@ -12,6 +12,7 @@ type CartItem = (Product & { quantity: number; type: 'product' }) |
 type ScanLog = { id: string; barcode: string; productName: string | null; success: boolean; time: string };
 
 export function ScannerView() {
+  const [products, setProducts] = useState(getProducts);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [barcodeInput, setBarcodeInput] = useState('');
   const [lastScanned, setLastScanned] = useState<{ name: string; image: string; barcode: string; price: number } | null>(null);
@@ -30,8 +31,12 @@ export function ScannerView() {
 
   useEffect(() => { inputRef.current?.focus(); }, []);
   useEffect(() => {
-    const unsub = subscribeSeries(() => setSeries(getSeries()));
-    return unsub;
+    const unsubSeries = subscribeSeries(() => setSeries(getSeries()));
+    const unsubProducts = subscribeProducts(() => setProducts(getProducts()));
+    return () => {
+      unsubSeries();
+      unsubProducts();
+    };
   }, []);
 
   const addProductToCart = (product: Product) => {
@@ -86,6 +91,7 @@ export function ScannerView() {
     e.preventDefault();
     const code = barcodeInput.trim();
     if (!code) return;
+
     const now = new Date().toLocaleTimeString();
 
     // 1. Check box barcode
@@ -100,7 +106,7 @@ export function ScannerView() {
 
     // 2. Check product barcode + series
     const matchingSeries = findSeriesByProductBarcode(code);
-    const foundProduct = productCatalog.find(p => p.barcode === code || p.sku.toLowerCase() === code.toLowerCase());
+    const foundProduct = products.find(p => p.barcode === code || p.sku.toLowerCase() === code.toLowerCase());
 
     if (matchingSeries.length > 0 && foundProduct) {
       setSerieChoice({ series: matchingSeries, productBarcode: code });
@@ -176,8 +182,10 @@ export function ScannerView() {
 
         {lastScanned && (
           <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-xl flex items-center gap-4">
-            <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-muted">
-              <img src={lastScanned.image} alt={lastScanned.name} className="w-full h-full object-cover" />
+            <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-slate-100 border border-slate-200">
+              {lastScanned.image ? (
+                <img src={lastScanned.image} alt={lastScanned.name} className="w-full h-full object-cover" />
+              ) : null}
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-2 text-green-700 mb-1"><CheckCircle2 className="w-5 h-5" /><span className="text-sm">Item added</span></div>
@@ -198,11 +206,21 @@ export function ScannerView() {
                 <div className="min-w-0"><div className="text-sm truncate">📦 {s.name}</div><div className="text-xs text-muted-foreground font-mono">{s.boxBarcode}</div></div>
               </button>
             ))}
-            {productCatalog.map(p => (
-              <button key={p.id} onClick={() => { addProductToCart(p); setLastScanned({ name: p.name, image: p.image, barcode: p.barcode, price: p.price }); setScanError(''); setScanLog(prev => [{ id: `${Date.now()}`, barcode: p.barcode, productName: p.name, success: true, time: new Date().toLocaleTimeString() }, ...prev].slice(0, 20)); }}
-                className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-colors text-left">
-                <div className="w-8 h-8 rounded bg-muted overflow-hidden flex-shrink-0"><img src={p.image} alt={p.name} className="w-full h-full object-cover" /></div>
-                <div className="min-w-0"><div className="text-sm truncate">{p.name}</div><div className="text-xs text-muted-foreground font-mono">{p.barcode}</div></div>
+            {products.map(p => (
+              <button
+                key={p.id}
+                onClick={() => { addProductToCart(p); setLastScanned({ name: p.name, image: p.image, barcode: p.barcode, price: p.price }); setScanError(''); setScanLog(prev => [{ id: `${Date.now()}`, barcode: p.barcode, productName: p.name, success: true, time: new Date().toLocaleTimeString() }, ...prev].slice(0, 20)); }}
+                className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-colors text-left"
+              >
+                <div className="w-8 h-8 rounded bg-slate-100 overflow-hidden flex-shrink-0 border border-slate-200">
+                  {p.image ? (
+                    <img src={p.image} alt={p.name} className="w-full h-full object-cover" />
+                  ) : null}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm truncate">{p.name}</div>
+                  <div className="text-xs text-muted-foreground font-mono">{p.barcode}</div>
+                </div>
               </button>
             ))}
           </div>
@@ -258,8 +276,10 @@ export function ScannerView() {
             <div className="space-y-4">
               {cart.map(item => (
                 <div key={item.id} className="flex gap-3">
-                  <div className={`w-14 h-14 rounded-lg overflow-hidden flex-shrink-0 ${item.type === 'serie' ? 'ring-2 ring-primary/30' : 'bg-muted'}`}>
-                    <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                  <div className={`w-14 h-14 rounded-lg overflow-hidden flex-shrink-0 border border-slate-200 ${item.type === 'serie' ? 'ring-2 ring-primary/30' : 'bg-slate-100'}`}>
+                    {item.image ? (
+                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                    ) : null}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm mb-0.5 truncate">{item.name}</div>

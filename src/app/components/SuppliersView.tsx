@@ -8,6 +8,8 @@ import {
   getPurchasesBySupplier, addPurchase, updatePurchase, deletePurchase, subscribePurchases,
   type Supplier, type Purchase,
 } from './data/suppliers';
+import { getProducts, subscribeProducts, type Product } from './data/products';
+import { getErrorMessage } from './data/shared';
 
 const emptySupplierForm = {
   name: '',
@@ -18,6 +20,7 @@ const emptySupplierForm = {
 };
 
 const emptyPurchaseForm = {
+  productId: '',
   productName: '',
   quantity: '',
   unitPrice: '',
@@ -28,6 +31,7 @@ const emptyPurchaseForm = {
 
 export function SuppliersView() {
   const [suppliers, setSuppliers] = useState(getSuppliers);
+  const [products, setProducts] = useState<Product[]>(getProducts);
   const [, setPurchaseTick] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [productSearchQuery, setProductSearchQuery] = useState('');
@@ -36,6 +40,7 @@ export function SuppliersView() {
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [supplierForm, setSupplierForm] = useState(emptySupplierForm);
   const [supplierErrors, setSupplierErrors] = useState<Record<string, string>>({});
+  const [supplierSaveError, setSupplierSaveError] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   const [showPurchaseModal, setShowPurchaseModal] = useState(false);
@@ -43,6 +48,7 @@ export function SuppliersView() {
   const [editingPurchase, setEditingPurchase] = useState<Purchase | null>(null);
   const [purchaseForm, setPurchaseForm] = useState(emptyPurchaseForm);
   const [purchaseErrors, setPurchaseErrors] = useState<Record<string, string>>({});
+  const [purchaseSaveError, setPurchaseSaveError] = useState('');
 
   const [viewingReceipt, setViewingReceipt] = useState<string | null>(null);
   const [deletePurchaseConfirmId, setDeletePurchaseConfirmId] = useState<string | null>(null);
@@ -50,7 +56,8 @@ export function SuppliersView() {
   useEffect(() => {
     const unsub1 = subscribeSuppliers(() => setSuppliers(getSuppliers()));
     const unsub2 = subscribePurchases(() => setPurchaseTick((t) => t + 1));
-    return () => { unsub1(); unsub2(); };
+    const unsub3 = subscribeProducts(() => setProducts(getProducts()));
+    return () => { unsub1(); unsub2(); unsub3(); };
   }, []);
 
   const filtered = suppliers.filter((s) => {
@@ -77,6 +84,7 @@ export function SuppliersView() {
   const openAddSupplier = () => {
     setSupplierForm(emptySupplierForm);
     setSupplierErrors({});
+    setSupplierSaveError('');
     setEditingSupplier(null);
     setShowSupplierModal(true);
   };
@@ -90,6 +98,7 @@ export function SuppliersView() {
       address: s.address,
     });
     setSupplierErrors({});
+    setSupplierSaveError('');
     setEditingSupplier(s);
     setShowSupplierModal(true);
   };
@@ -102,31 +111,37 @@ export function SuppliersView() {
     return Object.keys(errors).length === 0;
   };
 
-  const handleSaveSupplier = () => {
+  const handleSaveSupplier = async () => {
     if (!validateSupplierForm()) return;
-    if (editingSupplier) {
-      updateSupplier({
-        ...editingSupplier,
-        name: supplierForm.name.trim(),
-        company: supplierForm.company.trim(),
-        phone: supplierForm.phone.trim(),
-        email: supplierForm.email.trim(),
-        address: supplierForm.address.trim(),
-      });
-    } else {
-      addSupplier({
-        name: supplierForm.name.trim(),
-        company: supplierForm.company.trim(),
-        phone: supplierForm.phone.trim(),
-        email: supplierForm.email.trim(),
-        address: supplierForm.address.trim(),
-      });
+    setSupplierSaveError('');
+
+    try {
+      if (editingSupplier) {
+        await updateSupplier({
+          ...editingSupplier,
+          name: supplierForm.name.trim(),
+          company: supplierForm.company.trim(),
+          phone: supplierForm.phone.trim(),
+          email: supplierForm.email.trim(),
+          address: supplierForm.address.trim(),
+        });
+      } else {
+        await addSupplier({
+          name: supplierForm.name.trim(),
+          company: supplierForm.company.trim(),
+          phone: supplierForm.phone.trim(),
+          email: supplierForm.email.trim(),
+          address: supplierForm.address.trim(),
+        });
+      }
+      setShowSupplierModal(false);
+    } catch (error) {
+      setSupplierSaveError(getErrorMessage(error));
     }
-    setShowSupplierModal(false);
   };
 
-  const handleDeleteSupplier = (id: string) => {
-    deleteSupplier(id);
+  const handleDeleteSupplier = async (id: string) => {
+    await deleteSupplier(id);
     setDeleteConfirmId(null);
     if (selectedSupplierId === id) setSelectedSupplierId(null);
   };
@@ -138,10 +153,30 @@ export function SuppliersView() {
 
   // ── Purchase handlers ──
 
+  const openAddPurchase = (supplierId: string) => {
+    const firstProduct = products[0] ?? null;
+    setPurchaseForm({
+      ...emptyPurchaseForm,
+      productId: firstProduct?.id ?? '',
+      productName: firstProduct?.name ?? '',
+      unitPrice: firstProduct ? String(firstProduct.costPrice) : '',
+    });
+    setPurchaseErrors({});
+    setPurchaseSaveError('');
+    setPurchaseForSupplierId(supplierId);
+    setEditingPurchase(null);
+    setShowPurchaseModal(true);
+  };
+
 
 
   const openEditPurchase = (purchase: Purchase) => {
+    const linkedProduct = purchase.productId
+      ? products.find((product) => product.id === purchase.productId)
+      : products.find((product) => product.name === purchase.productName);
+
     setPurchaseForm({
+      productId: linkedProduct?.id ?? purchase.productId ?? '',
       productName: purchase.productName,
       quantity: purchase.quantity.toString(),
       unitPrice: purchase.unitPrice.toString(),
@@ -150,6 +185,7 @@ export function SuppliersView() {
       notes: purchase.notes,
     });
     setPurchaseErrors({});
+    setPurchaseSaveError('');
     setPurchaseForSupplierId(purchase.supplierId);
     setEditingPurchase(purchase);
     setShowPurchaseModal(true);
@@ -157,7 +193,7 @@ export function SuppliersView() {
 
   const validatePurchaseForm = () => {
     const errors: Record<string, string> = {};
-    if (!purchaseForm.productName.trim()) errors.productName = 'Required';
+    if (!purchaseForm.productId) errors.productId = 'Select a product';
     if (!purchaseForm.quantity || isNaN(Number(purchaseForm.quantity)) || Number(purchaseForm.quantity) <= 0) errors.quantity = 'Enter a valid number';
     if (!purchaseForm.unitPrice || isNaN(Number(purchaseForm.unitPrice)) || Number(purchaseForm.unitPrice) <= 0) errors.unitPrice = 'Enter a valid price';
     if (!purchaseForm.date) errors.date = 'Required';
@@ -165,45 +201,76 @@ export function SuppliersView() {
     return Object.keys(errors).length === 0;
   };
 
-  const handleSavePurchase = () => {
+  const handleSavePurchase = async () => {
     if (!validatePurchaseForm() || !purchaseForSupplierId) return;
     const qty = parseInt(purchaseForm.quantity);
     const unit = parseFloat(purchaseForm.unitPrice);
-    
-    if (editingPurchase) {
-      updatePurchase({
-        ...editingPurchase,
-        productName: purchaseForm.productName.trim(),
-        quantity: qty,
-        unitPrice: unit,
-        totalPrice: qty * unit,
-        date: purchaseForm.date,
-        receiptImage: purchaseForm.receiptImage,
-        notes: purchaseForm.notes.trim(),
-      });
-    } else {
-      addPurchase({
-        supplierId: purchaseForSupplierId,
-        productName: purchaseForm.productName.trim(),
-        quantity: qty,
-        unitPrice: unit,
-        totalPrice: qty * unit,
-        date: purchaseForm.date,
-        receiptImage: purchaseForm.receiptImage,
-        notes: purchaseForm.notes.trim(),
-      });
+    const selectedProduct = products.find((product) => product.id === purchaseForm.productId);
+    if (!selectedProduct) {
+      setPurchaseErrors((prev) => ({ ...prev, productId: 'Select a valid product' }));
+      return;
     }
-    setShowPurchaseModal(false);
+    const productName = selectedProduct.name;
+    
+    setPurchaseSaveError('');
+
+    try {
+      if (editingPurchase) {
+        await updatePurchase({
+          ...editingPurchase,
+          productId: selectedProduct.id,
+          productName,
+          quantity: qty,
+          unitPrice: unit,
+          totalPrice: qty * unit,
+          date: purchaseForm.date,
+          receiptImage: purchaseForm.receiptImage,
+          notes: purchaseForm.notes.trim(),
+        });
+      } else {
+        await addPurchase({
+          supplierId: purchaseForSupplierId,
+          productId: selectedProduct.id,
+          productName,
+          quantity: qty,
+          unitPrice: unit,
+          totalPrice: qty * unit,
+          date: purchaseForm.date,
+          receiptImage: purchaseForm.receiptImage,
+          notes: purchaseForm.notes.trim(),
+        });
+      }
+      setShowPurchaseModal(false);
+    } catch (error) {
+      setPurchaseSaveError(getErrorMessage(error));
+    }
   };
 
-  const handleDeletePurchase = (id: string) => {
-    deletePurchase(id);
+  const handleDeletePurchase = async (id: string) => {
+    await deletePurchase(id);
     setDeletePurchaseConfirmId(null);
   };
 
   const updatePurchaseField = (field: string, value: string) => {
     setPurchaseForm((prev) => ({ ...prev, [field]: value }));
     if (purchaseErrors[field]) setPurchaseErrors((prev) => { const n = { ...prev }; delete n[field]; return n; });
+  };
+
+  const handleProductSelection = (productId: string) => {
+    const selectedProduct = products.find((product) => product.id === productId);
+    setPurchaseForm((prev) => ({
+      ...prev,
+      productId,
+      productName: selectedProduct?.name ?? '',
+      unitPrice: selectedProduct ? String(selectedProduct.costPrice) : prev.unitPrice,
+    }));
+    if (purchaseErrors.productId) {
+      setPurchaseErrors((prev) => {
+        const next = { ...prev };
+        delete next.productId;
+        return next;
+      });
+    }
   };
 
   const handleReceiptUpload = () => {
@@ -286,6 +353,14 @@ export function SuppliersView() {
                 <FileText className="w-5 h-5 text-muted-foreground" />
                 Purchases
               </h3>
+              <button
+                onClick={() => openAddPurchase(selectedSupplier.id)}
+                disabled={products.length === 0}
+                className="px-3.5 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Plus className="w-4 h-4" />
+                Add Purchase
+              </button>
             </div>
             
             {(() => {
@@ -350,7 +425,7 @@ export function SuppliersView() {
                               {deletePurchaseConfirmId === purchase.id ? (
                                 <div className="flex items-center justify-end gap-2">
                                   <button
-                                    onClick={() => handleDeletePurchase(purchase.id)}
+                                    onClick={() => void handleDeletePurchase(purchase.id)}
                                     className="px-3 py-1 text-xs bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
                                   >
                                     Confirm
@@ -533,7 +608,7 @@ export function SuppliersView() {
                         {deleteConfirmId === supplier.id ? (
                           <div className="flex items-center gap-1">
                             <button
-                              onClick={() => handleDeleteSupplier(supplier.id)}
+                              onClick={() => void handleDeleteSupplier(supplier.id)}
                               className="px-3 py-1 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 shadow-sm"
                             >
                               Confirm
@@ -635,6 +710,11 @@ export function SuppliersView() {
                 />
               </div>
             </div>
+            {supplierSaveError && (
+              <div className="mx-5 mb-3 -mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {supplierSaveError}
+              </div>
+            )}
             <div className="flex gap-3 p-5 border-t border-border bg-muted/20">
               <button
                 onClick={() => setShowSupplierModal(false)}
@@ -643,7 +723,7 @@ export function SuppliersView() {
                 Cancel
               </button>
               <button
-                onClick={handleSaveSupplier}
+                onClick={() => void handleSaveSupplier()}
                 className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-lg font-medium shadow-sm hover:opacity-90 transition-opacity"
               >
                 {editingSupplier ? 'Save Changes' : 'Add Supplier'}
@@ -670,15 +750,24 @@ export function SuppliersView() {
             </div>
             <div className="p-5 space-y-5 max-h-[65vh] overflow-y-auto">
               <div>
-                <label className="text-sm font-medium mb-1.5 block">Product Name <span className="text-red-500">*</span></label>
-                <input
-                  value={purchaseForm.productName}
-                  onChange={(e) => updatePurchaseField('productName', e.target.value)}
-                  className={`w-full px-3.5 py-2.5 bg-input-background border rounded-lg text-sm shadow-sm focus:ring-1 focus:ring-primary outline-none transition-all ${purchaseErrors.productName ? 'border-red-400' : 'border-border'}`}
-                  placeholder="e.g. Cotton T-Shirt (Bulk)"
+                <label className="text-sm font-medium mb-1.5 block">Product <span className="text-red-500">*</span></label>
+                <select
+                  value={purchaseForm.productId}
+                  onChange={(e) => handleProductSelection(e.target.value)}
+                  className={`w-full px-3.5 py-2.5 bg-input-background border rounded-lg text-sm shadow-sm focus:ring-1 focus:ring-primary outline-none transition-all ${purchaseErrors.productId ? 'border-red-400' : 'border-border'}`}
                   autoFocus
-                />
-                {purchaseErrors.productName && <p className="text-red-500 text-xs mt-1.5">{purchaseErrors.productName}</p>}
+                >
+                  <option value="">Select product...</option>
+                  {products.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.name} ({product.sku})
+                    </option>
+                  ))}
+                </select>
+                {purchaseErrors.productId && <p className="text-red-500 text-xs mt-1.5">{purchaseErrors.productId}</p>}
+                {products.length === 0 && (
+                  <p className="text-xs text-amber-600 mt-1.5">No products found in inventory. Add products first to record purchases.</p>
+                )}
               </div>
               <div className="grid grid-cols-3 gap-5">
                 <div>
@@ -771,6 +860,11 @@ export function SuppliersView() {
                 </div>
               </div>
             </div>
+            {purchaseSaveError && (
+              <div className="mx-5 mb-3 -mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {purchaseSaveError}
+              </div>
+            )}
             <div className="flex gap-3 p-5 border-t border-border bg-muted/20">
               <button
                 onClick={() => setShowPurchaseModal(false)}
@@ -779,8 +873,9 @@ export function SuppliersView() {
                 Cancel
               </button>
               <button
-                onClick={handleSavePurchase}
-                className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-lg font-medium shadow-sm hover:opacity-90 transition-opacity"
+                onClick={() => void handleSavePurchase()}
+                disabled={products.length === 0}
+                className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-lg font-medium shadow-sm hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {editingPurchase ? 'Save Changes' : 'Save Purchase'}
               </button>

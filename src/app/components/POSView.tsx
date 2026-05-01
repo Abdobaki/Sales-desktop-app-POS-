@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Search, Plus, Minus, X, Printer, ScanBarcode, User, PackageOpen, Pencil } from 'lucide-react';
-import { productCatalog, type Product } from './data/products';
+import { productCatalog, getProducts, subscribeProducts, type Product } from './data/products';
 import { getSeries, findSerieByBoxBarcode, findSeriesByProductBarcode, sellSerieItem, subscribeSeries, getSerieRemainingCount, getSerieAvailableSizes, type Serie } from './data/series';
 import { type Customer } from './data/customers';
 import { CustomerPicker } from './CustomerPicker';
@@ -12,6 +12,7 @@ type CartItem = (Product & { quantity: number; type: 'product' }) |
 const categories = ['All', 'Shirts', 'Pants', 'Accessories'];
 
 export function POSView() {
+  const [products, setProducts] = useState(getProducts);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -37,8 +38,12 @@ export function POSView() {
   const [editPriceValue, setEditPriceValue] = useState('');
 
   useEffect(() => {
-    const unsub = subscribeSeries(() => setSeries(getSeries()));
-    return unsub;
+    const unsubSeries = subscribeSeries(() => setSeries(getSeries()));
+    const unsubProducts = subscribeProducts(() => setProducts(getProducts()));
+    return () => {
+      unsubSeries();
+      unsubProducts();
+    };
   }, []);
 
   const addProductToCart = (product: Product) => {
@@ -108,7 +113,7 @@ export function POSView() {
     setEditPriceValue('');
   };
 
-  const filteredProducts = productCatalog.filter((product) => {
+  const filteredProducts = products.filter((product) => {
     const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       product.barcode.includes(searchQuery) || product.sku.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategory === 'All' || product.category === selectedCategory;
@@ -186,7 +191,6 @@ export function POSView() {
     e.preventDefault();
     const code = barcodeInput.trim();
     if (!code) return;
-
     // 1. Check if it's a box barcode
     const serieByBox = findSerieByBoxBarcode(code);
     if (serieByBox) {
@@ -199,7 +203,7 @@ export function POSView() {
 
     // 2. Check if it's a product barcode that also matches series
     const matchingSeries = findSeriesByProductBarcode(code);
-    const foundProduct = productCatalog.find((p) => p.barcode === code || p.sku.toLowerCase() === code.toLowerCase());
+    const foundProduct = products.find((p) => p.barcode === code || p.sku.toLowerCase() === code.toLowerCase());
 
     if (matchingSeries.length > 0 && foundProduct) {
       // Show choice dialog
@@ -305,8 +309,10 @@ export function POSView() {
           {filteredProducts.map((product) => (
             <button key={product.id} onClick={() => addProductToCart(product)}
               className="bg-card border border-border rounded-lg p-4 text-left hover:border-primary transition-colors">
-              <div className="aspect-square bg-muted rounded-lg mb-3 overflow-hidden">
-                <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
+              <div className="aspect-square bg-slate-100 rounded-lg mb-3 overflow-hidden border border-slate-200">
+                {product.image ? (
+                  <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
+                ) : null}
               </div>
               <div className="text-sm text-muted-foreground mb-1">{product.category}</div>
               <div className="mb-2">{product.name}</div>
@@ -348,8 +354,10 @@ export function POSView() {
             <div className="space-y-4">
               {cart.map((item) => (
                 <div key={item.id} className="flex gap-3">
-                  <div className={`w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 ${item.type === 'serie' ? 'ring-2 ring-primary/30' : 'bg-muted'}`}>
-                    <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                  <div className={`w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 border border-slate-200 ${item.type === 'serie' ? 'ring-2 ring-primary/30' : 'bg-slate-100'}`}>
+                    {item.image ? (
+                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                    ) : null}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="mb-1 text-sm">{item.name}</div>

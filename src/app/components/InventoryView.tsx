@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Plus, MoreVertical, ChevronDown, X, Pencil, Trash2, Upload, ImageIcon, ScanBarcode } from 'lucide-react';
+import { Search, Plus, MoreVertical, ChevronDown, X, Pencil, Trash2, Upload, ScanBarcode } from 'lucide-react';
 import { getProducts, addProduct, updateProduct, deleteProduct, subscribeProducts, type Product } from './data/products';
 import { getSuppliers, subscribeSuppliers } from './data/suppliers';
+import { getErrorMessage, isUniqueConstraintError } from './data/shared';
 import { BarcodeGeneratorModal, BarcodeDisplay, generateBarcodeNumber } from './BarcodeGenerator';
 
 const categories = ['All Categories', 'Shirts', 'Pants', 'Accessories'];
@@ -19,6 +20,10 @@ const emptyForm = {
   stock: '',
   supplierId: '',
 };
+
+function formatDz(amount: number) {
+  return `${amount.toFixed(2)} DZ`;
+}
 
 function SupplierSelect({ suppliers, value, onChange }: { suppliers: any[], value: string, onChange: (val: string) => void }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -108,6 +113,7 @@ export function InventoryView() {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [showBarcodeGenerator, setShowBarcodeGenerator] = useState(false);
   const [barcodeForProduct, setBarcodeForProduct] = useState<Product | null>(null);
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
     const unsubProducts = subscribeProducts(() => setProducts(getProducts()));
@@ -129,6 +135,7 @@ export function InventoryView() {
   const openAdd = () => {
     setForm(emptyForm);
     setFormErrors({});
+    setSaveError('');
     setEditingProduct(null);
     setShowAddModal(true);
   };
@@ -147,6 +154,7 @@ export function InventoryView() {
       supplierId: product.supplierId || '',
     });
     setFormErrors({});
+    setSaveError('');
     setEditingProduct(product);
     setShowAddModal(true);
     setOpenMenuId(null);
@@ -163,36 +171,53 @@ export function InventoryView() {
     return Object.keys(errors).length === 0;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!validateForm()) return;
+    setSaveError('');
     const productData = {
       name: form.name.trim(),
       price: parseFloat(form.price),
       costPrice: parseFloat(form.costPrice),
       category: form.category,
-      image: form.image || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=400&h=400&fit=crop',
+      image: form.image,
       barcode: form.barcode.trim() || generateBarcodeNumber(),
       sku: form.sku.trim() || `SKU-${Date.now().toString(36).toUpperCase()}`,
       variants: form.variants.trim() || '-',
       stock: parseInt(form.stock),
       supplierId: form.supplierId || undefined,
     };
-    if (editingProduct) {
-      updateProduct({ ...productData, id: editingProduct.id });
-    } else {
-      addProduct(productData);
+
+    try {
+      if (editingProduct) {
+        await updateProduct({ ...productData, id: editingProduct.id });
+      } else {
+        await addProduct(productData);
+      }
+      setShowAddModal(false);
+    } catch (error) {
+      if (isUniqueConstraintError(error, 'products', 'barcode')) {
+        setFormErrors((prev) => ({ ...prev, barcode: 'This barcode already exists.' }));
+        return;
+      }
+
+      if (isUniqueConstraintError(error, 'products', 'sku')) {
+        setFormErrors((prev) => ({ ...prev, sku: 'This SKU already exists.' }));
+        return;
+      }
+
+      setSaveError(getErrorMessage(error));
     }
-    setShowAddModal(false);
   };
 
-  const handleDelete = (id: string) => {
-    deleteProduct(id);
+  const handleDelete = async (id: string) => {
+    await deleteProduct(id);
     setDeleteConfirmId(null);
     setOpenMenuId(null);
   };
 
   const updateField = (field: string, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+    if (saveError) setSaveError('');
     if (formErrors[field]) setFormErrors((prev) => { const n = { ...prev }; delete n[field]; return n; });
   };
 
@@ -239,7 +264,7 @@ export function InventoryView() {
         </div>
       </div>
 
-      <div className="bg-card border border-border rounded-lg overflow-hidden">
+      <div className="bg-card border border-border rounded-lg overflow-visible">
         <table className="w-full">
           <thead className="bg-muted/50 border-b border-border">
             <tr>
@@ -256,12 +281,16 @@ export function InventoryView() {
             </tr>
           </thead>
           <tbody>
-            {filteredInventory.map((item) => (
+            {filteredInventory.map((item, index) => (
               <tr key={item.id} className="border-b border-border last:border-0 hover:bg-muted/20">
                 <td className="px-6 py-4">
-                  <div className="w-12 h-12 bg-muted rounded-lg overflow-hidden">
-                    <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-                  </div>
+                  {item.image ? (
+                    <div className="w-12 h-12 bg-muted rounded-lg overflow-hidden">
+                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                    </div>
+                  ) : (
+                    <div className="w-12 h-12 bg-slate-100 rounded-lg border border-slate-200" />
+                  )}
                 </td>
                 <td className="px-6 py-4 text-muted-foreground">{item.sku}</td>
                 <td className="px-6 py-4 text-muted-foreground font-mono text-sm">{item.barcode}</td>
@@ -273,8 +302,8 @@ export function InventoryView() {
                     {item.stock}
                   </span>
                 </td>
-                <td className="px-6 py-4 text-muted-foreground">${item.costPrice.toFixed(2)}</td>
-                <td className="px-6 py-4">${item.price.toFixed(2)}</td>
+                <td className="px-6 py-4 text-muted-foreground">{formatDz(item.costPrice)}</td>
+                <td className="px-6 py-4">{formatDz(item.price)}</td>
                 <td className="px-6 py-4">
                   <div className="relative">
                     <button
@@ -286,7 +315,7 @@ export function InventoryView() {
                     {openMenuId === item.id && (
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setOpenMenuId(null)} />
-                        <div className="absolute right-0 top-8 bg-card border border-border rounded-lg shadow-lg z-20 w-44 py-1">
+                        <div className={`absolute right-0 bg-card border border-border rounded-lg shadow-lg z-20 w-44 py-1 ${index >= filteredInventory.length - 2 ? 'bottom-8' : 'top-8'}`}>
                           <button
                             onClick={() => openEdit(item)}
                             className="w-full px-4 py-2 text-left text-sm hover:bg-muted flex items-center gap-2"
@@ -367,9 +396,10 @@ export function InventoryView() {
                   <input
                     value={form.sku}
                     onChange={(e) => updateField('sku', e.target.value)}
-                    className="w-full px-3 py-2.5 bg-input-background border border-border rounded-lg text-sm"
+                    className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.sku ? 'border-red-400' : 'border-border'}`}
                     placeholder="Auto-generated if empty"
                   />
+                  {formErrors.sku && <p className="text-red-500 text-xs mt-1">{formErrors.sku}</p>}
                 </div>
                 <div>
                   <label className="text-sm text-muted-foreground mb-1 block">Barcode <span className="text-xs">(auto-generated if empty)</span></label>
@@ -409,6 +439,7 @@ export function InventoryView() {
                     className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.costPrice ? 'border-red-400' : 'border-border'}`}
                     placeholder="0.00"
                   />
+                  <p className="text-xs text-muted-foreground mt-1">Currency: DZ</p>
                   {formErrors.costPrice && <p className="text-red-500 text-xs mt-1">{formErrors.costPrice}</p>}
                 </div>
                 <div>
@@ -422,6 +453,7 @@ export function InventoryView() {
                     className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.price ? 'border-red-400' : 'border-border'}`}
                     placeholder="0.00"
                   />
+                  <p className="text-xs text-muted-foreground mt-1">Currency: DZ</p>
                   {formErrors.price && <p className="text-red-500 text-xs mt-1">{formErrors.price}</p>}
                 </div>
               </div>
@@ -429,7 +461,7 @@ export function InventoryView() {
                 <div className="bg-muted/50 border border-border rounded-lg px-4 py-3 flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Profit per unit</span>
                   <span className={`text-sm ${Number(form.price) - Number(form.costPrice) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    ${(Number(form.price) - Number(form.costPrice)).toFixed(2)}
+                    {formatDz(Number(form.price) - Number(form.costPrice))}
                     <span className="text-xs text-muted-foreground ml-2">
                       ({((Number(form.price) - Number(form.costPrice)) / Number(form.costPrice) * 100).toFixed(1)}%)
                     </span>
@@ -515,6 +547,11 @@ export function InventoryView() {
                 </div>
               </div>
             </div>
+            {saveError && (
+              <div className="mx-5 mb-3 -mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {saveError}
+              </div>
+            )}
             <div className="flex gap-3 p-5 border-t border-border">
               <button
                 onClick={() => setShowAddModal(false)}
@@ -523,7 +560,7 @@ export function InventoryView() {
                 Cancel
               </button>
               <button
-                onClick={handleSave}
+                onClick={() => void handleSave()}
                 className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
               >
                 {editingProduct ? 'Save Changes' : 'Add Product'}
@@ -549,7 +586,7 @@ export function InventoryView() {
                 Cancel
               </button>
               <button
-                onClick={() => handleDelete(deleteConfirmId)}
+                onClick={() => void handleDelete(deleteConfirmId)}
                 className="flex-1 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
               >
                 Delete
@@ -578,7 +615,7 @@ export function InventoryView() {
           initialValue={barcodeForProduct.barcode}
           productName={barcodeForProduct.name}
           onApply={(barcode) => {
-            updateProduct({ ...barcodeForProduct, barcode });
+            void updateProduct({ ...barcodeForProduct, barcode });
             setBarcodeForProduct(null);
           }}
           onClose={() => setBarcodeForProduct(null)}
