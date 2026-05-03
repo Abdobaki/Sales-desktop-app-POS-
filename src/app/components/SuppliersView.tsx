@@ -9,6 +9,7 @@ import {
   type Supplier, type Purchase,
 } from './data/suppliers';
 import { getProducts, subscribeProducts, type Product } from './data/products';
+import { getStoreSettings, subscribeSettings, type StoreSettings } from './data/settings';
 import { getErrorMessage } from './data/shared';
 
 const emptySupplierForm = {
@@ -29,9 +30,19 @@ const emptyPurchaseForm = {
   notes: '',
 };
 
+function formatCurrency(amount: number, currencyCode: string) {
+  const code = (currencyCode || 'DZD').toUpperCase();
+  const suffix = code === 'DZD' ? 'DZ' : code;
+  return `${new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount)} ${suffix}`;
+}
+
 export function SuppliersView() {
   const [suppliers, setSuppliers] = useState(getSuppliers);
   const [products, setProducts] = useState<Product[]>(getProducts);
+  const [storeSettings, setStoreSettings] = useState<StoreSettings>(getStoreSettings());
   const [, setPurchaseTick] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [productSearchQuery, setProductSearchQuery] = useState('');
@@ -57,7 +68,8 @@ export function SuppliersView() {
     const unsub1 = subscribeSuppliers(() => setSuppliers(getSuppliers()));
     const unsub2 = subscribePurchases(() => setPurchaseTick((t) => t + 1));
     const unsub3 = subscribeProducts(() => setProducts(getProducts()));
-    return () => { unsub1(); unsub2(); unsub3(); };
+    const unsub4 = subscribeSettings(() => setStoreSettings(getStoreSettings()));
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
   }, []);
 
   const filtered = suppliers.filter((s) => {
@@ -341,7 +353,7 @@ export function SuppliersView() {
                 </div>
                 <div className="text-right flex-shrink-0 ml-4">
                   <div className="text-sm text-muted-foreground mb-1">{selectedSupplier.totalPurchases} Total Purchases</div>
-                  <div className="text-2xl font-bold text-primary">${selectedSupplier.totalSpent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                   <div className="text-2xl font-bold text-primary">{formatCurrency(selectedSupplier.totalSpent, storeSettings.currencyCode)}</div>
                 </div>
              </div>
           </div>
@@ -405,8 +417,8 @@ export function SuppliersView() {
                             </td>
                             <td className="px-5 py-4 text-sm font-medium">{purchase.productName}</td>
                             <td className="px-5 py-4 text-sm text-muted-foreground">{purchase.quantity}</td>
-                            <td className="px-5 py-4 text-sm text-muted-foreground">${purchase.unitPrice.toFixed(2)}</td>
-                            <td className="px-5 py-4 text-sm font-medium text-primary">${purchase.totalPrice.toFixed(2)}</td>
+                            <td className="px-5 py-4 text-sm text-muted-foreground">{formatCurrency(purchase.unitPrice, storeSettings.currencyCode)}</td>
+                            <td className="px-5 py-4 text-sm font-medium text-primary">{formatCurrency(purchase.totalPrice, storeSettings.currencyCode)}</td>
                             <td className="px-5 py-4 text-sm text-muted-foreground max-w-[200px] truncate" title={purchase.notes}>{purchase.notes || '—'}</td>
                             <td className="px-5 py-4">
                               {purchase.receiptImage ? (
@@ -533,7 +545,7 @@ export function SuppliersView() {
                 </div>
                 <span className="text-sm text-muted-foreground">Total Spent</span>
               </div>
-              <div className="text-2xl font-semibold">${suppliers.reduce((s, sup) => s + sup.totalSpent, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+               <div className="text-2xl font-semibold">{formatCurrency(suppliers.reduce((s, sup) => s + sup.totalSpent, 0), storeSettings.currencyCode)}</div>
             </div>
           </div>
 
@@ -591,7 +603,7 @@ export function SuppliersView() {
                     <div className="flex items-center gap-4 flex-shrink-0 ml-6">
                       <div className="text-right">
                         <div className="text-sm text-muted-foreground">{supplier.totalPurchases} purchases</div>
-                        <div className="text-primary font-medium text-base">${supplier.totalSpent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                        <div className="text-primary font-medium text-base">{formatCurrency(supplier.totalSpent, storeSettings.currencyCode)}</div>
                       </div>
                       
                       <div className="h-8 w-px bg-border mx-2"></div>
@@ -810,9 +822,9 @@ export function SuppliersView() {
               {Number(purchaseForm.quantity) > 0 && Number(purchaseForm.unitPrice) > 0 && (
                 <div className="bg-primary/5 border border-primary/20 rounded-lg px-4 py-3.5 flex items-center justify-between">
                   <span className="text-sm font-medium text-primary/80">Total Cost</span>
-                  <span className="text-lg font-bold text-primary">
-                    ${(Number(purchaseForm.quantity) * Number(purchaseForm.unitPrice)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
+                    <span className="text-lg font-bold text-primary">
+                     {formatCurrency(Number(purchaseForm.quantity) * Number(purchaseForm.unitPrice), storeSettings.currencyCode)}
+                   </span>
                 </div>
               )}
               <div>

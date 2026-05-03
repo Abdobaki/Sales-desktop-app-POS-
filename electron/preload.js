@@ -25,6 +25,18 @@ const dbCrudApi = {
   },
 };
 
+const seriesApi = {
+  list: (options = {}) => ipcRenderer.invoke('db:series:list', options),
+  get: (id) => ipcRenderer.invoke('db:series:get', { id }),
+  create: (values = {}) => ipcRenderer.invoke('db:series:create', values),
+  update: (payload = {}) => ipcRenderer.invoke('db:series:update', payload),
+  delete: (id) => ipcRenderer.invoke('db:series:delete', { id }),
+};
+
+const salesApi = {
+  checkout: (payload = {}) => ipcRenderer.invoke('sales:checkout', payload),
+};
+
 for (const tableName of tableNames) {
   dbCrudApi[tableName] = {
     list: (options = {}) => ipcRenderer.invoke(`db:${tableName}:list`, options),
@@ -42,6 +54,8 @@ const electronAPI = {
   db: {
     ping: () => ipcRenderer.invoke('db:ping'),
     ...dbCrudApi,
+    series: seriesApi,
+    sales: salesApi,
   },
 };
 

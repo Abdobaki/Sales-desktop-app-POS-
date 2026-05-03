@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Search, Plus, X, Pencil, Trash2, Package, ChevronDown, Upload, ScanBarcode } from 'lucide-react';
 import { getSeries, addSerie, updateSerie, deleteSerie, subscribeSeries, getSerieRemainingCount, getSerieTotalCount, getSerieAvailableSizes, type Serie, type SerieItem } from './data/series';
 import { getSuppliers, subscribeSuppliers } from './data/suppliers';
+import { getErrorMessage } from './data/shared';
 import { BarcodeGeneratorModal, BarcodeDisplay, generateBarcodeNumber } from './BarcodeGenerator';
 
 const serieCategories = ['Shoes', 'Shirts', 'Pants', 'Accessories'];
@@ -15,8 +16,12 @@ const sizePresets: Record<string, string[]> = {
 
 const emptyForm = {
   name: '', boxBarcode: '', productBarcode: '', category: 'Shoes',
-  image: '', costPrice: '', sellingPrice: '', unitPrice: '', supplierId: '',
+  image: '', costPrice: '', sellingPrice: '', unitPrice: '', boxQuantity: '1', supplierId: '',
 };
+
+function formatDz(amount: number) {
+  return `${amount.toFixed(2)} DZ`;
+}
 
 export function SeriesView() {
   const [series, setSeries] = useState(getSeries);
@@ -33,6 +38,7 @@ export function SeriesView() {
   const [newSizeQty, setNewSizeQty] = useState('1');
   const [showBoxBarcodeGen, setShowBoxBarcodeGen] = useState(false);
   const [showProductBarcodeGen, setShowProductBarcodeGen] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
     const u1 = subscribeSeries(() => setSeries(getSeries()));
@@ -46,17 +52,17 @@ export function SeriesView() {
   });
 
   const openAdd = () => {
-    setForm(emptyForm); setFormErrors({}); setSizes([]); setEditingSerie(null); setShowAddModal(true);
+    setForm(emptyForm); setFormErrors({}); setSizes([]); setEditingSerie(null); setSaveError(''); setShowAddModal(true);
   };
 
   const openEdit = (s: Serie) => {
     setForm({
       name: s.name, boxBarcode: s.boxBarcode, productBarcode: s.productBarcode,
       category: s.category, image: s.image, costPrice: s.costPrice.toString(),
-      sellingPrice: s.sellingPrice.toString(), unitPrice: s.unitPrice.toString(), supplierId: s.supplierId || '',
+      sellingPrice: s.sellingPrice.toString(), unitPrice: s.unitPrice.toString(), boxQuantity: s.boxQuantity.toString(), supplierId: s.supplierId || '',
     });
     setSizes(s.items.map(i => ({ size: i.size, quantity: i.quantity })));
-    setFormErrors({}); setEditingSerie(s); setShowAddModal(true);
+    setFormErrors({}); setSaveError(''); setEditingSerie(s); setShowAddModal(true);
   };
 
   const validate = () => {
@@ -67,36 +73,53 @@ export function SeriesView() {
     if (!form.costPrice || isNaN(Number(form.costPrice)) || Number(form.costPrice) <= 0) e.costPrice = 'Invalid';
     if (!form.sellingPrice || isNaN(Number(form.sellingPrice)) || Number(form.sellingPrice) <= 0) e.sellingPrice = 'Invalid';
     if (!form.unitPrice || isNaN(Number(form.unitPrice)) || Number(form.unitPrice) <= 0) e.unitPrice = 'Invalid';
+    if (form.boxQuantity === '' || isNaN(Number(form.boxQuantity)) || Number(form.boxQuantity) < 0 || !Number.isInteger(Number(form.boxQuantity))) e.boxQuantity = 'Invalid';
     if (sizes.length === 0) e.sizes = 'Add at least one size';
     setFormErrors(e);
     return Object.keys(e).length === 0;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!validate()) return;
+    setSaveError('');
+
     const data = {
       name: form.name.trim(), boxBarcode: form.boxBarcode.trim(),
       productBarcode: form.productBarcode.trim(), category: form.category,
       image: form.image || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400&h=400&fit=crop',
       costPrice: parseFloat(form.costPrice), sellingPrice: parseFloat(form.sellingPrice),
       unitPrice: parseFloat(form.unitPrice),
+      boxQuantity: Math.trunc(Number(form.boxQuantity)),
       supplierId: form.supplierId || undefined,
       items: sizes.map(s => ({ size: s.size, quantity: s.quantity, sold: 0 } as SerieItem)),
     };
-    if (editingSerie) {
-      const existingItems = editingSerie.items;
-      const items = sizes.map(s => {
-        const existing = existingItems.find(i => i.size === s.size);
-        return { size: s.size, quantity: s.quantity, sold: existing ? Math.min(existing.sold, s.quantity) : 0 };
-      });
-      updateSerie({ ...editingSerie, ...data, items });
-    } else {
-      addSerie(data);
+
+    try {
+      if (editingSerie) {
+        const existingItems = editingSerie.items;
+        const items = sizes.map(s => {
+          const existing = existingItems.find(i => i.size === s.size);
+          return { size: s.size, quantity: s.quantity, sold: existing ? Math.min(existing.sold, s.quantity) : 0 };
+        });
+        await updateSerie({ ...editingSerie, ...data, items });
+      } else {
+        await addSerie(data);
+      }
+      setShowAddModal(false);
+    } catch (error) {
+      setSaveError(getErrorMessage(error));
     }
-    setShowAddModal(false);
   };
 
-  const handleDelete = (id: string) => { deleteSerie(id); setDeleteConfirmId(null); };
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteSerie(id);
+      setDeleteConfirmId(null);
+    } catch (error) {
+      setSaveError(getErrorMessage(error));
+      setDeleteConfirmId(null);
+    }
+  };
 
   const addSize = () => {
     const s = newSize.trim();
@@ -145,6 +168,12 @@ export function SeriesView() {
         </button>
       </div>
 
+      {saveError && !showAddModal && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {saveError}
+        </div>
+      )}
+
       <div className="mb-6">
         <div className="relative max-w-md">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-6 h-6 text-muted-foreground" />
@@ -162,9 +191,10 @@ export function SeriesView() {
               <th className="px-6 py-3 text-left text-sm text-muted-foreground">Name</th>
               <th className="px-6 py-3 text-left text-sm text-muted-foreground">Box Barcode</th>
               <th className="px-6 py-3 text-left text-sm text-muted-foreground">Product Barcode</th>
+              <th className="px-6 py-3 text-left text-sm text-muted-foreground">Box Qty</th>
               <th className="px-6 py-3 text-left text-sm text-muted-foreground">Category</th>
               <th className="px-6 py-3 text-left text-sm text-muted-foreground">Sizes</th>
-              <th className="px-6 py-3 text-left text-sm text-muted-foreground">Remaining</th>
+              <th className="px-6 py-3 text-left text-sm text-muted-foreground">Sizes Remaining</th>
               <th className="px-6 py-3 text-left text-sm text-muted-foreground">Box Cost</th>
               <th className="px-6 py-3 text-left text-sm text-muted-foreground">Box Price</th>
               <th className="px-6 py-3"></th>
@@ -184,13 +214,14 @@ export function SeriesView() {
                   <td className="px-6 py-4 font-medium">{s.name}</td>
                   <td className="px-6 py-4 text-muted-foreground font-mono text-sm">{s.boxBarcode}</td>
                   <td className="px-6 py-4 text-muted-foreground font-mono text-sm">{s.productBarcode}</td>
+                  <td className="px-6 py-4 text-sm">{s.boxQuantity}</td>
                   <td className="px-6 py-4 text-muted-foreground">{s.category}</td>
                   <td className="px-6 py-4 text-sm">{s.items.map(i => `${i.size}${i.quantity > 1 ? ` ×${i.quantity}` : ''}`).join(', ')}</td>
                   <td className="px-6 py-4">
                     <span className={rem <= 2 ? 'text-red-600' : rem < tot ? 'text-amber-600' : ''}>{rem}/{tot}</span>
                   </td>
-                  <td className="px-6 py-4 text-muted-foreground">${s.costPrice.toFixed(2)}</td>
-                  <td className="px-6 py-4">${s.sellingPrice.toFixed(2)}</td>
+                  <td className="px-6 py-4 text-muted-foreground">{formatDz(s.costPrice)}</td>
+                  <td className="px-6 py-4">{formatDz(s.sellingPrice)}</td>
                   <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center gap-1">
                       <button onClick={() => openEdit(s)} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="w-4 h-4" /></button>
@@ -201,7 +232,7 @@ export function SeriesView() {
               );
             })}
             {filtered.length === 0 && (
-              <tr><td colSpan={10} className="px-6 py-12 text-center text-muted-foreground">No series found</td></tr>
+              <tr><td colSpan={11} className="px-6 py-12 text-center text-muted-foreground">No series found</td></tr>
             )}
           </tbody>
         </table>
@@ -278,26 +309,43 @@ export function SeriesView() {
                   <label className="text-sm text-muted-foreground mb-1 block">Box Cost Price *</label>
                   <input value={form.costPrice} onChange={e => updateField('costPrice', e.target.value)} type="number" step="0.01" min="0"
                     className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.costPrice ? 'border-red-400' : 'border-border'}`} placeholder="0.00" />
+                  <p className="text-xs text-muted-foreground mt-1">Currency: DZ</p>
                   {formErrors.costPrice && <p className="text-red-500 text-xs mt-1">{formErrors.costPrice}</p>}
                 </div>
                 <div>
                   <label className="text-sm text-muted-foreground mb-1 block">Box Selling Price *</label>
                   <input value={form.sellingPrice} onChange={e => updateField('sellingPrice', e.target.value)} type="number" step="0.01" min="0"
                     className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.sellingPrice ? 'border-red-400' : 'border-border'}`} placeholder="0.00" />
+                  <p className="text-xs text-muted-foreground mt-1">Currency: DZ</p>
                   {formErrors.sellingPrice && <p className="text-red-500 text-xs mt-1">{formErrors.sellingPrice}</p>}
                 </div>
                 <div>
                   <label className="text-sm text-muted-foreground mb-1 block">Unit Price *</label>
                   <input value={form.unitPrice} onChange={e => updateField('unitPrice', e.target.value)} type="number" step="0.01" min="0"
                     className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.unitPrice ? 'border-red-400' : 'border-border'}`} placeholder="0.00" />
+                  <p className="text-xs text-muted-foreground mt-1">Currency: DZ</p>
                   {formErrors.unitPrice && <p className="text-red-500 text-xs mt-1">{formErrors.unitPrice}</p>}
                 </div>
+              </div>
+              <div>
+                <label className="text-sm text-muted-foreground mb-1 block">Box Quantity *</label>
+                <input
+                  value={form.boxQuantity}
+                  onChange={e => updateField('boxQuantity', e.target.value)}
+                  type="number"
+                  min="0"
+                  step="1"
+                  className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.boxQuantity ? 'border-red-400' : 'border-border'}`}
+                  placeholder="1"
+                />
+                <p className="text-xs text-muted-foreground mt-1">How many boxes of this serie are in stock</p>
+                {formErrors.boxQuantity && <p className="text-red-500 text-xs mt-1">{formErrors.boxQuantity}</p>}
               </div>
               {Number(form.costPrice) > 0 && Number(form.sellingPrice) > 0 && (
                 <div className="bg-muted/50 border border-border rounded-lg px-4 py-3 flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Box profit</span>
                   <span className={`text-sm ${Number(form.sellingPrice) - Number(form.costPrice) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    ${(Number(form.sellingPrice) - Number(form.costPrice)).toFixed(2)}
+                    {formatDz(Number(form.sellingPrice) - Number(form.costPrice))}
                     <span className="text-xs text-muted-foreground ml-2">
                       ({((Number(form.sellingPrice) - Number(form.costPrice)) / Number(form.costPrice) * 100).toFixed(1)}%)
                     </span>
@@ -390,9 +438,10 @@ export function SeriesView() {
                 </div>
               </div>
             </div>
+            {saveError && <div className="mx-5 mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{saveError}</div>}
             <div className="flex gap-3 p-5 border-t border-border">
               <button onClick={() => setShowAddModal(false)} className="flex-1 py-2.5 border border-border rounded-lg hover:bg-muted transition-colors">Cancel</button>
-              <button onClick={handleSave} className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors">
+              <button onClick={() => void handleSave()} className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors">
                 {editingSerie ? 'Save Changes' : 'Add Serie'}
               </button>
             </div>
@@ -408,7 +457,7 @@ export function SeriesView() {
             <p className="text-sm text-muted-foreground mb-6">Are you sure? This will remove the entire box and all its items.</p>
             <div className="flex gap-3">
               <button onClick={() => setDeleteConfirmId(null)} className="flex-1 py-2.5 border border-border rounded-lg hover:bg-muted transition-colors">Cancel</button>
-              <button onClick={() => handleDelete(deleteConfirmId)} className="flex-1 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">Delete</button>
+               <button onClick={() => void handleDelete(deleteConfirmId)} className="flex-1 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">Delete</button>
             </div>
           </div>
         </div>
@@ -443,12 +492,16 @@ export function SeriesView() {
                   <div className="font-mono">{detailSerie.productBarcode}</div>
                 </div>
                 <div className="bg-muted/50 rounded-lg p-3">
+                  <div className="text-muted-foreground mb-0.5">Box Qty</div>
+                  <div>{detailSerie.boxQuantity}</div>
+                </div>
+                <div className="bg-muted/50 rounded-lg p-3">
                   <div className="text-muted-foreground mb-0.5">Box Cost</div>
-                  <div>${detailSerie.costPrice.toFixed(2)}</div>
+                  <div>{formatDz(detailSerie.costPrice)}</div>
                 </div>
                 <div className="bg-muted/50 rounded-lg p-3">
                   <div className="text-muted-foreground mb-0.5">Box Price</div>
-                  <div>${detailSerie.sellingPrice.toFixed(2)}</div>
+                  <div>{formatDz(detailSerie.sellingPrice)}</div>
                 </div>
               </div>
               <div>

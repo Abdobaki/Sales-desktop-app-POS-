@@ -95,6 +95,10 @@ function ensureInitialized() {
 
 void ensureInitialized();
 
+export async function refreshProducts() {
+  await loadProductsFromDb();
+}
+
 export function getProducts() {
   return [..._products];
 }

@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { ScanBarcode, Plus, Minus, X, Printer, Trash2, CheckCircle2, AlertCircle, User, PackageOpen, Pencil } from 'lucide-react';
 import { productCatalog, getProducts, subscribeProducts, type Product } from './data/products';
-import { getSeries, findSerieByBoxBarcode, findSeriesByProductBarcode, sellSerieItem, subscribeSeries, getSerieRemainingCount, getSerieAvailableSizes, type Serie } from './data/series';
+import { getSeries, findSerieByBoxBarcode, findSeriesByProductBarcode, subscribeSeries, getSerieRemainingCount, getSerieAvailableSizes, getSerieBoxQuantity, type Serie } from './data/series';
 import { type Customer } from './data/customers';
+import { checkoutSale } from './data/sales';
+import { getErrorMessage } from './data/shared';
 import { CustomerPicker } from './CustomerPicker';
 
 type CartItem = (Product & { quantity: number; type: 'product' }) |
@@ -25,6 +27,7 @@ export function ScannerView() {
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
   const [serieChoice, setSerieChoice] = useState<{ series: Serie[]; productBarcode: string } | null>(null);
   const [sizePickSerie, setSizePickSerie] = useState<Serie | null>(null);
+  const [checkoutError, setCheckoutError] = useState('');
   // Inline price editing state
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
   const [editPriceValue, setEditPriceValue] = useState('');
@@ -48,12 +51,12 @@ export function ScannerView() {
   };
 
   const addSerieToCart = (serie: Serie) => {
-    const remaining = getSerieRemainingCount(serie);
-    if (remaining === 0) return;
+    const boxQuantity = getSerieBoxQuantity(serie);
+    if (boxQuantity === 0) return;
     setCart((prev) => {
       const existing = prev.find((item) => item.type === 'serie' && item.serieId === serie.id);
       if (existing) return prev;
-      return [...prev, { type: 'serie' as const, id: `serie-${serie.id}`, serieId: serie.id, name: `📦 ${serie.name} (${remaining} items)`, image: serie.image, price: serie.sellingPrice, quantity: 1 }];
+      return [...prev, { type: 'serie' as const, id: `serie-${serie.id}`, serieId: serie.id, name: `📦 ${serie.name} (${boxQuantity} box${boxQuantity > 1 ? 'es' : ''})`, image: serie.image, price: serie.sellingPrice, quantity: 1 }];
     });
   };
 
@@ -97,10 +100,16 @@ export function ScannerView() {
     // 1. Check box barcode
     const serieByBox = findSerieByBoxBarcode(code);
     if (serieByBox) {
-      addSerieToCart(serieByBox);
-      setLastScanned({ name: serieByBox.name, image: serieByBox.image, barcode: code, price: serieByBox.sellingPrice });
-      setScanError('');
-      setScanLog(prev => [{ id: `${Date.now()}`, barcode: code, productName: `📦 ${serieByBox.name}`, success: true, time: now }, ...prev].slice(0, 20));
+      if (getSerieBoxQuantity(serieByBox) <= 0) {
+        setLastScanned(null);
+        setScanError(`No boxes left for ${serieByBox.name}`);
+        setScanLog(prev => [{ id: `${Date.now()}`, barcode: code, productName: null, success: false, time: now }, ...prev].slice(0, 20));
+      } else {
+        addSerieToCart(serieByBox);
+        setLastScanned({ name: serieByBox.name, image: serieByBox.image, barcode: code, price: serieByBox.sellingPrice });
+        setScanError('');
+        setScanLog(prev => [{ id: `${Date.now()}`, barcode: code, productName: `📦 ${serieByBox.name}`, success: true, time: now }, ...prev].slice(0, 20));
+      }
       setBarcodeInput(''); inputRef.current?.focus(); return;
     }
 
@@ -140,17 +149,29 @@ export function ScannerView() {
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const total = subtotal;
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     if (cart.length === 0) return;
-    cart.forEach((item) => {
-      if (item.type === 'serie-item') sellSerieItem(item.serieId, item.size);
-      else if (item.type === 'serie') {
-        const serie = getSeries().find(s => s.id === item.serieId);
-        if (serie) serie.items.filter(i => !i.sold).forEach(i => sellSerieItem(serie.id, i.size));
-      }
-    });
-    setReceipt({ items: [...cart], subtotal, total, date: new Date().toLocaleString(), id: `REC-${Date.now().toString(36).toUpperCase()}`, customer: selectedCustomer });
-    setCart([]); setScanLog([]); setLastScanned(null); setSelectedCustomer(null);
+    setCheckoutError('');
+
+    try {
+      const result = await checkoutSale({
+        sourceView: 'scanner',
+        customerId: selectedCustomer?.id ?? null,
+        items: cart,
+      });
+
+      setReceipt({
+        items: [...cart],
+        subtotal,
+        total,
+        date: new Date(result.soldAt).toLocaleString(),
+        id: result.receiptNumber,
+        customer: selectedCustomer,
+      });
+      setCart([]); setScanLog([]); setLastScanned(null); setSelectedCustomer(null);
+    } catch (error) {
+      setCheckoutError(getErrorMessage(error));
+    }
   };
 
   const handlePrint = () => {
@@ -199,11 +220,11 @@ export function ScannerView() {
         <div className="mb-6 bg-card border border-border rounded-xl p-5">
           <h3 className="mb-3 text-sm text-muted-foreground">Quick Reference — Sample Barcodes</h3>
           <div className="grid grid-cols-2 gap-2">
-            {series.filter(s => getSerieRemainingCount(s) > 0).map(s => (
+            {series.filter(s => getSerieBoxQuantity(s) > 0).map(s => (
               <button key={s.id} onClick={() => { addSerieToCart(s); setLastScanned({ name: s.name, image: s.image, barcode: s.boxBarcode, price: s.sellingPrice }); setScanError(''); }}
                 className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-colors text-left bg-primary/5 border border-primary/10">
                 <div className="w-8 h-8 rounded bg-muted overflow-hidden flex-shrink-0"><img src={s.image} alt={s.name} className="w-full h-full object-cover" /></div>
-                <div className="min-w-0"><div className="text-sm truncate">📦 {s.name}</div><div className="text-xs text-muted-foreground font-mono">{s.boxBarcode}</div></div>
+                <div className="min-w-0"><div className="text-sm truncate">📦 {s.name} ({getSerieBoxQuantity(s)} box{getSerieBoxQuantity(s) > 1 ? 'es' : ''})</div><div className="text-xs text-muted-foreground font-mono">{s.boxBarcode}</div></div>
               </button>
             ))}
             {products.map(p => (
@@ -320,6 +341,7 @@ export function ScannerView() {
         </div>
 
         <div className="p-6 border-t border-border space-y-6">
+          {checkoutError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{checkoutError}</div>}
           <div className="space-y-3">
             <div className="flex justify-between text-sm"><span className="text-muted-foreground">Subtotal</span><span>${subtotal.toFixed(2)}</span></div>
             <div className="flex justify-between pt-3 border-t border-border"><span>Total</span><span className="text-lg">${total.toFixed(2)}</span></div>

@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { Search, Plus, Minus, X, Printer, ScanBarcode, User, PackageOpen, Pencil } from 'lucide-react';
 import { productCatalog, getProducts, subscribeProducts, type Product } from './data/products';
-import { getSeries, findSerieByBoxBarcode, findSeriesByProductBarcode, sellSerieItem, subscribeSeries, getSerieRemainingCount, getSerieAvailableSizes, type Serie } from './data/series';
+import { getSeries, findSerieByBoxBarcode, findSeriesByProductBarcode, subscribeSeries, getSerieRemainingCount, getSerieAvailableSizes, getSerieBoxQuantity, type Serie } from './data/series';
 import { type Customer } from './data/customers';
+import { checkoutSale } from './data/sales';
+import { getErrorMessage } from './data/shared';
 import { CustomerPicker } from './CustomerPicker';
 
 type CartItem = (Product & { quantity: number; type: 'product' }) |
@@ -10,6 +12,10 @@ type CartItem = (Product & { quantity: number; type: 'product' }) |
   { type: 'serie-item'; id: string; serieId: string; serieName: string; size: string; name: string; image: string; price: number; quantity: number };
 
 const categories = ['All', 'Shirts', 'Pants', 'Accessories'];
+
+function formatDz(amount: number) {
+  return `${amount.toFixed(2)} DZ`;
+}
 
 export function POSView() {
   const [products, setProducts] = useState(getProducts);
@@ -33,9 +39,12 @@ export function POSView() {
   // Serie choice dialog state
   const [serieChoice, setSerieChoice] = useState<{ series: Serie[]; productBarcode: string } | null>(null);
   const [sizePickSerie, setSizePickSerie] = useState<Serie | null>(null);
+  const [checkoutError, setCheckoutError] = useState('');
   // Inline price editing state
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
   const [editPriceValue, setEditPriceValue] = useState('');
+  const [editingQuantityId, setEditingQuantityId] = useState<string | null>(null);
+  const [editQuantityValue, setEditQuantityValue] = useState('');
 
   useEffect(() => {
     const unsubSeries = subscribeSeries(() => setSeries(getSeries()));
@@ -59,14 +68,14 @@ export function POSView() {
   };
 
   const addSerieToCart = (serie: Serie) => {
-    const remaining = getSerieRemainingCount(serie);
-    if (remaining === 0) return;
+    const boxQuantity = getSerieBoxQuantity(serie);
+    if (boxQuantity === 0) return;
     setCart((prev) => {
       const existing = prev.find((item) => item.type === 'serie' && item.serieId === serie.id);
       if (existing) return prev; // Can only add one box
       return [...prev, {
         type: 'serie' as const, id: `serie-${serie.id}`, serieId: serie.id,
-        name: `📦 ${serie.name} (${remaining} items)`, image: serie.image,
+        name: `📦 ${serie.name} (${boxQuantity} box${boxQuantity > 1 ? 'es' : ''})`, image: serie.image,
         price: serie.sellingPrice, quantity: 1,
       }];
     });
@@ -113,6 +122,23 @@ export function POSView() {
     setEditPriceValue('');
   };
 
+  const startEditQuantity = (item: CartItem) => {
+    if (item.type !== 'product') return;
+    setEditingQuantityId(item.id);
+    setEditQuantityValue(String(item.quantity));
+  };
+
+  const confirmEditQuantity = (id: string) => {
+    const newQuantity = Math.floor(Number(editQuantityValue));
+    if (!Number.isNaN(newQuantity) && newQuantity > 0) {
+      setCart((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, quantity: newQuantity } : item))
+      );
+    }
+    setEditingQuantityId(null);
+    setEditQuantityValue('');
+  };
+
   const filteredProducts = products.filter((product) => {
     const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       product.barcode.includes(searchQuery) || product.sku.toLowerCase().includes(searchQuery.toLowerCase());
@@ -123,28 +149,30 @@ export function POSView() {
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const total = subtotal;
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     if (cart.length === 0) return;
-    // Process serie items - mark as sold
-    cart.forEach((item) => {
-      if (item.type === 'serie-item') {
-        sellSerieItem(item.serieId, item.size);
-      } else if (item.type === 'serie') {
-        // Sell all remaining items in the serie
-        const serie = getSeries().find(s => s.id === item.serieId);
-        if (serie) {
-          serie.items.filter(i => !i.sold).forEach(i => sellSerieItem(serie.id, i.size));
-        }
-      }
-    });
-    setReceipt({
-      items: [...cart], subtotal, total,
-      date: new Date().toLocaleString(),
-      id: `REC-${Date.now().toString(36).toUpperCase()}`,
-      customer: selectedCustomer,
-    });
-    setCart([]);
-    setSelectedCustomer(null);
+    setCheckoutError('');
+
+    try {
+      const result = await checkoutSale({
+        sourceView: 'pos',
+        customerId: selectedCustomer?.id ?? null,
+        items: cart,
+      });
+
+      setReceipt({
+        items: [...cart],
+        subtotal,
+        total,
+        date: new Date(result.soldAt).toLocaleString(),
+        id: result.receiptNumber,
+        customer: selectedCustomer,
+      });
+      setCart([]);
+      setSelectedCustomer(null);
+    } catch (error) {
+      setCheckoutError(getErrorMessage(error));
+    }
   };
 
   const handlePrint = () => {
@@ -175,10 +203,10 @@ export function POSView() {
         ${customerLine}
         <div class="line"></div>
         ${receipt.items.map(item => `
-          <div class="row"><span>${item.name} x${item.quantity}</span><span>$${(item.price * item.quantity).toFixed(2)}</span></div>
+          <div class="row"><span>${item.name} x${item.quantity}</span><span>${formatDz(item.price * item.quantity)}</span></div>
         `).join('')}
         <div class="line"></div>
-        <div class="row bold" style="font-size:15px"><span>TOTAL</span><span>$${receipt.total.toFixed(2)}</span></div>
+        <div class="row bold" style="font-size:15px"><span>TOTAL</span><span>${formatDz(receipt.total)}</span></div>
         <div class="line"></div>
         <div class="center"><p style="margin-top:12px">Thank you for shopping!</p><p>Have a great day</p></div>
       </body></html>
@@ -194,8 +222,12 @@ export function POSView() {
     // 1. Check if it's a box barcode
     const serieByBox = findSerieByBoxBarcode(code);
     if (serieByBox) {
-      addSerieToCart(serieByBox);
-      setBarcodeError('');
+      if (getSerieBoxQuantity(serieByBox) <= 0) {
+        setBarcodeError(`No boxes left for ${serieByBox.name}`);
+      } else {
+        addSerieToCart(serieByBox);
+        setBarcodeError('');
+      }
       setBarcodeInput('');
       barcodeRef.current?.focus();
       return;
@@ -282,22 +314,22 @@ export function POSView() {
         </div>
 
         {/* Series Cards */}
-        {series.filter(s => getSerieRemainingCount(s) > 0).length > 0 && (
+        {series.filter(s => getSerieBoxQuantity(s) > 0).length > 0 && (
           <div className="mb-6">
-            <h3 className="text-sm text-muted-foreground mb-3 flex items-center gap-1.5"><PackageOpen className="w-4 h-4" /> Available Series</h3>
+            <h3 className="text-sm text-muted-foreground mb-3 flex items-center gap-1.5"><PackageOpen className="w-4 h-4" /> Available Boxes</h3>
             <div className="grid grid-cols-3 gap-4">
-              {series.filter(s => getSerieRemainingCount(s) > 0).map(s => (
+              {series.filter(s => getSerieBoxQuantity(s) > 0).map(s => (
                 <button key={s.id} onClick={() => addSerieToCart(s)}
                   className="bg-card border-2 border-primary/20 rounded-lg p-4 text-left hover:border-primary transition-colors relative">
                   <div className="absolute top-2 right-2 bg-primary text-primary-foreground text-xs px-2 py-0.5 rounded-full">
-                    📦 {getSerieRemainingCount(s)} items
+                    📦 {getSerieBoxQuantity(s)} box{getSerieBoxQuantity(s) > 1 ? 'es' : ''}
                   </div>
                   <div className="aspect-square bg-muted rounded-lg mb-3 overflow-hidden">
                     <img src={s.image} alt={s.name} className="w-full h-full object-cover" />
                   </div>
                   <div className="text-sm text-muted-foreground mb-1">{s.category}</div>
                   <div className="mb-2 text-sm">{s.name}</div>
-                  <div className="text-primary">${s.sellingPrice.toFixed(2)}</div>
+                  <div className="text-primary">{s.sellingPrice.toFixed(2)} DZ</div>
                 </button>
               ))}
             </div>
@@ -316,7 +348,7 @@ export function POSView() {
               </div>
               <div className="text-sm text-muted-foreground mb-1">{product.category}</div>
               <div className="mb-2">{product.name}</div>
-              <div className="text-primary">${product.price.toFixed(2)}</div>
+              <div className="text-primary">{formatDz(product.price)}</div>
             </button>
           ))}
         </div>
@@ -363,7 +395,7 @@ export function POSView() {
                     <div className="mb-1 text-sm">{item.name}</div>
                     {editingPriceId === item.id ? (
                       <form onSubmit={(e) => { e.preventDefault(); confirmEditPrice(item.id); }} className="flex items-center gap-1.5">
-                        <span className="text-sm text-muted-foreground">$</span>
+                        <span className="text-sm text-muted-foreground">DZ</span>
                         <input
                           type="number" step="0.01" min="0"
                           value={editPriceValue}
@@ -375,14 +407,37 @@ export function POSView() {
                       </form>
                     ) : (
                       <button onClick={() => startEditPrice(item)} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary transition-colors group">
-                        <span>${item.price.toFixed(2)}</span>
+                        <span>{formatDz(item.price)}</span>
                         <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                       </button>
                     )}
                     {item.type === 'product' && (
                       <div className="flex items-center gap-2 mt-2">
                         <button onClick={() => updateQuantity(item.id, -1)} className="w-8 h-8 rounded bg-secondary hover:bg-muted flex items-center justify-center"><Minus className="w-4 h-4" /></button>
-                        <span className="w-8 text-center">{item.quantity}</span>
+                        {editingQuantityId === item.id ? (
+                          <form onSubmit={(e) => { e.preventDefault(); confirmEditQuantity(item.id); }}>
+                            <input
+                              type="number"
+                              min="1"
+                              step="1"
+                              autoFocus
+                              value={editQuantityValue}
+                              onChange={(e) => setEditQuantityValue(e.target.value)}
+                              onBlur={() => confirmEditQuantity(item.id)}
+                              className="w-16 px-2 py-1 text-center text-sm border border-primary rounded-md bg-primary/5 focus:outline-none focus:ring-1 focus:ring-primary"
+                            />
+                          </form>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => startEditQuantity(item)}
+                            className="w-10 text-center text-sm font-medium hover:text-primary transition-colors group flex items-center justify-center gap-1"
+                            title="Edit quantity"
+                          >
+                            <span>{item.quantity}</span>
+                            <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </button>
+                        )}
                         <button onClick={() => updateQuantity(item.id, 1)} className="w-8 h-8 rounded bg-secondary hover:bg-muted flex items-center justify-center"><Plus className="w-4 h-4" /></button>
                       </div>
                     )}
@@ -395,14 +450,15 @@ export function POSView() {
         </div>
 
         <div className="p-6 border-t border-border space-y-6">
+          {checkoutError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{checkoutError}</div>}
           <div className="space-y-3">
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Subtotal</span>
-              <span>${subtotal.toFixed(2)}</span>
+              <span>{formatDz(subtotal)}</span>
             </div>
             <div className="flex justify-between pt-3 border-t border-border">
               <span>Total</span>
-              <span className="text-lg">${total.toFixed(2)}</span>
+              <span className="text-lg">{formatDz(total)}</span>
             </div>
           </div>
           <button disabled={cart.length === 0} onClick={handleCheckout}
@@ -488,12 +544,12 @@ export function POSView() {
                 {receipt.items.map((item) => (
                   <div key={item.id} className="flex justify-between text-sm">
                     <span>{item.name} x{item.quantity}</span>
-                    <span>${(item.price * item.quantity).toFixed(2)}</span>
+                    <span>{formatDz(item.price * item.quantity)}</span>
                   </div>
                 ))}
               </div>
               <div className="border-t border-dashed border-gray-300 my-3" />
-              <div className="flex justify-between"><span>TOTAL</span><span>${receipt.total.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span>TOTAL</span><span>{formatDz(receipt.total)}</span></div>
               <div className="text-center text-sm text-muted-foreground mt-4">Thank you for shopping!</div>
             </div>
             <div className="flex gap-3 p-4 border-t border-border">

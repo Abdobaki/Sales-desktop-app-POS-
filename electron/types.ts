@@ -40,6 +40,53 @@ export type DbDeleteResult = {
   changes: number;
 };
 
+export type SeriesItemRecord = {
+  size: string;
+  quantity: number;
+  sold: number;
+};
+
+export type SeriesRecord = {
+  id: string;
+  name: string;
+  boxBarcode: string;
+  productBarcode: string;
+  productId?: string;
+  category: string;
+  image: string;
+  costPrice: number;
+  sellingPrice: number;
+  unitPrice: number;
+  boxQuantity: number;
+  items: SeriesItemRecord[];
+  supplierId?: string;
+  createdAt: string;
+};
+
+export type SalesCheckoutPayload = {
+  sourceView?: 'pos' | 'scanner';
+  customerId?: string | null;
+  paymentMethodCode?: string | null;
+  notes?: string;
+  soldAt?: string;
+  discountCents?: number;
+  taxCents?: number;
+  items: Array<Record<string, unknown>>;
+};
+
+export type SalesCheckoutResult = {
+  orderId: string;
+  receiptNumber: string;
+  soldAt: string;
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  totalCents: number;
+  sourceView: string;
+  customerId: string | null;
+  paymentMethodCode: string | null;
+};
+
 export type DbTableCrudApi = {
   list: (options?: DbListOptions) => Promise<DbRow[]>;
   get: (id?: string | number) => Promise<DbRow | null>;
@@ -61,6 +108,16 @@ export interface ElectronAPI {
       create: (table: DbTableName, values?: Record<string, unknown>) => Promise<DbRow | null>;
       update: (table: DbTableName, id: string | number, values: Record<string, unknown>) => Promise<DbRow | null>;
       delete: (table: DbTableName, id: string | number) => Promise<DbDeleteResult>;
+    };
+    series: {
+      list: (options?: DbListOptions) => Promise<SeriesRecord[]>;
+      get: (id?: string | number) => Promise<SeriesRecord | null>;
+      create: (values?: Record<string, unknown>) => Promise<SeriesRecord | null>;
+      update: (payload?: Record<string, unknown>) => Promise<SeriesRecord | null>;
+      delete: (id?: string | number) => Promise<DbDeleteResult>;
+    };
+    sales: {
+      checkout: (payload?: SalesCheckoutPayload) => Promise<SalesCheckoutResult>;
     };
     store_settings: DbTableCrudApi;
     payment_methods: DbTableCrudApi;

@@ -390,42 +390,40 @@ export function InventoryView() {
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">SKU <span className="text-xs">(optional)</span></label>
+              <div>
+                <label className="text-sm text-muted-foreground mb-1 block">SKU <span className="text-xs">(optional)</span></label>
+                <input
+                  value={form.sku}
+                  onChange={(e) => updateField('sku', e.target.value)}
+                  className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.sku ? 'border-red-400' : 'border-border'}`}
+                  placeholder="Auto-generated if empty"
+                />
+                {formErrors.sku && <p className="text-red-500 text-xs mt-1">{formErrors.sku}</p>}
+              </div>
+              <div>
+                <label className="text-sm text-muted-foreground mb-1 block">Barcode <span className="text-xs">(auto-generated if empty)</span></label>
+                <div className="flex gap-2">
                   <input
-                    value={form.sku}
-                    onChange={(e) => updateField('sku', e.target.value)}
-                    className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.sku ? 'border-red-400' : 'border-border'}`}
+                    value={form.barcode}
+                    onChange={(e) => updateField('barcode', e.target.value)}
+                    className={`flex-1 px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.barcode ? 'border-red-400' : 'border-border'}`}
                     placeholder="Auto-generated if empty"
                   />
-                  {formErrors.sku && <p className="text-red-500 text-xs mt-1">{formErrors.sku}</p>}
+                  <button
+                    type="button"
+                    onClick={() => setShowBarcodeGenerator(true)}
+                    className="px-3 py-2.5 bg-primary/10 text-primary border border-primary/30 rounded-lg hover:bg-primary/20 transition-colors flex items-center gap-1.5 text-sm whitespace-nowrap"
+                  >
+                    <ScanBarcode className="w-4 h-4" />
+                    Generate
+                  </button>
                 </div>
-                <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">Barcode <span className="text-xs">(auto-generated if empty)</span></label>
-                  <div className="flex gap-2">
-                    <input
-                      value={form.barcode}
-                      onChange={(e) => updateField('barcode', e.target.value)}
-                      className={`flex-1 px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.barcode ? 'border-red-400' : 'border-border'}`}
-                      placeholder="Auto-generated if empty"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowBarcodeGenerator(true)}
-                      className="px-3 py-2.5 bg-primary/10 text-primary border border-primary/30 rounded-lg hover:bg-primary/20 transition-colors flex items-center gap-1.5 text-sm whitespace-nowrap"
-                    >
-                      <ScanBarcode className="w-4 h-4" />
-                      Generate
-                    </button>
+                {formErrors.barcode && <p className="text-red-500 text-xs mt-1">{formErrors.barcode}</p>}
+                {form.barcode && (
+                  <div className="mt-2 bg-white border border-border rounded-lg p-2 flex justify-center">
+                    <BarcodeDisplay value={form.barcode} width={1.5} height={40} />
                   </div>
-                  {formErrors.barcode && <p className="text-red-500 text-xs mt-1">{formErrors.barcode}</p>}
-                  {form.barcode && (
-                    <div className="mt-2 bg-white border border-border rounded-lg p-2 flex justify-center">
-                      <BarcodeDisplay value={form.barcode} width={1.5} height={40} />
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

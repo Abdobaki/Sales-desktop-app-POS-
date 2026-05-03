@@ -151,6 +151,10 @@ function ensureInitialized() {
 
 void ensureInitialized();
 
+export async function refreshCustomers() {
+  await loadCustomersFromDb();
+}
+
 export function getCustomers() {
   return [..._customers];
 }

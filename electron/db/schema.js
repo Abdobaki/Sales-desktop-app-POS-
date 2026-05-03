@@ -220,6 +220,55 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 3,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS series (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          name TEXT NOT NULL,
+          box_barcode TEXT NOT NULL UNIQUE,
+          product_barcode TEXT NOT NULL UNIQUE,
+          product_id TEXT,
+          category TEXT NOT NULL,
+          image_url TEXT,
+          cost_price_cents INTEGER NOT NULL CHECK (cost_price_cents >= 0),
+          selling_price_cents INTEGER NOT NULL CHECK (selling_price_cents >= 0),
+          unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0),
+          supplier_id TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL,
+          FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS series_items (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          series_id TEXT NOT NULL,
+          size TEXT NOT NULL,
+          quantity INTEGER NOT NULL CHECK (quantity > 0),
+          sold INTEGER NOT NULL DEFAULT 0 CHECK (sold >= 0 AND sold <= quantity),
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE,
+          UNIQUE (series_id, size)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_series_category ON series(category);
+        CREATE INDEX IF NOT EXISTS idx_series_supplier ON series(supplier_id);
+        CREATE INDEX IF NOT EXISTS idx_series_items_series ON series_items(series_id, sort_order);
+      `);
+    },
+  },
+  {
+    version: 4,
+    up(db) {
+      db.exec(`
+        ALTER TABLE series ADD COLUMN box_quantity INTEGER NOT NULL DEFAULT 1 CHECK (box_quantity >= 0);
+      `);
+    },
+  },
 ];
 
 function getUserVersion(db) {
