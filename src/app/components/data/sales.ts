@@ -68,15 +68,12 @@ async function applyLocalSale(items: SaleCartItem[]) {
     }
 
     if (item.type === 'serie') {
-      if (item.quantity !== 1) {
-        throw new Error('Series box sales can only have quantity 1.');
+      const available = getSerieBoxQuantity(serie);
+      if (item.quantity > available) {
+        throw new Error(`Not enough boxes for series: ${serie.name}. Available: ${available}`);
       }
 
-      if (getSerieBoxQuantity(serie) <= 0) {
-        throw new Error(`No boxes left for series: ${serie.name}`);
-      }
-
-      resolvedItems.push({ type: 'serie', serie });
+      resolvedItems.push({ type: 'serie', serie, quantity: item.quantity });
       continue;
     }
 
@@ -103,7 +100,7 @@ async function applyLocalSale(items: SaleCartItem[]) {
     }
 
     if (resolved.type === 'serie') {
-      if (!adjustSerieBoxQuantity(resolved.serie.id, -1)) {
+      if (!adjustSerieBoxQuantity(resolved.serie.id, -resolved.quantity)) {
         throw new Error(`No boxes left for series: ${resolved.serie.name}`);
       }
       continue;

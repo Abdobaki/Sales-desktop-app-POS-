@@ -497,23 +497,26 @@ function checkoutSale(db, rawPayload = {}) {
         const { seriesRow, items: seriesItems } = loadedSeries;
         const totalUnits = seriesItems.reduce((sum, row) => sum + Math.trunc(toNumber(row.quantity, 0)), 0);
         const unitCostCents = totalUnits > 0 ? Math.round(toNumber(seriesRow.cost_price_cents, 0) / totalUnits) : null;
+        const boxCostCents = Math.trunc(toNumber(seriesRow.cost_price_cents, 0));
         const productId = seriesRow.product_id ? String(seriesRow.product_id) : null;
 
         if (item.type === 'serie') {
-          if (item.quantity !== 1) {
-            throw new Error('Series box sales can only have quantity 1.');
-          }
-
           const boxQuantity = Math.trunc(toNumber(seriesRow.box_quantity, 0));
-          if (boxQuantity <= 0) {
-            throw new Error(`No boxes left for series: ${seriesRow.name}`);
+          if (item.quantity > boxQuantity) {
+            throw new Error(`Not enough boxes for series: ${seriesRow.name}. Available: ${boxQuantity}`);
           }
 
-          db.prepare(`
+          const info = db.prepare(`
             UPDATE series
-            SET box_quantity = box_quantity - 1, updated_at = ?
-            WHERE id = ?
-          `).run(now, seriesRow.id);
+            SET box_quantity = box_quantity - ?, updated_at = ?
+            WHERE id = ? AND box_quantity >= ?
+          `).run(item.quantity, now, seriesRow.id, item.quantity);
+
+          if (info.changes === 0) {
+            throw new Error(`Not enough boxes for series: ${seriesRow.name}. Available: ${boxQuantity}`);
+          }
+
+          const lineTotalCents = toCents(item.price * item.quantity);
 
           insertOrderItem.run(
             `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
@@ -522,10 +525,10 @@ function checkoutSale(db, rawPayload = {}) {
             String(seriesRow.name ?? ''),
             null,
             String(seriesRow.box_barcode ?? ''),
-            1,
+            item.quantity,
             toCents(item.price),
-            toCents(item.price),
-            unitCostCents
+            lineTotalCents,
+            boxCostCents
           );
 
           continue;

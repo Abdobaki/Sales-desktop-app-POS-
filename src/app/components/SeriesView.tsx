@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Search, Plus, X, Pencil, Trash2, Package, ChevronDown, Upload, ScanBarcode } from 'lucide-react';
+import { Search, Plus, X, Pencil, Trash2, ChevronDown, ScanBarcode } from 'lucide-react';
 import { getSeries, addSerie, updateSerie, deleteSerie, subscribeSeries, getSerieRemainingCount, getSerieTotalCount, getSerieAvailableSizes, type Serie, type SerieItem } from './data/series';
 import { getSuppliers, subscribeSuppliers } from './data/suppliers';
 import { getErrorMessage } from './data/shared';
 import { BarcodeGeneratorModal, BarcodeDisplay, generateBarcodeNumber } from './BarcodeGenerator';
+import { ItemImage, ItemImagePlaceholder } from './ItemImagePlaceholder';
 
 const serieCategories = ['Shoes', 'Shirts', 'Pants', 'Accessories'];
 
@@ -86,7 +87,7 @@ export function SeriesView() {
     const data = {
       name: form.name.trim(), boxBarcode: form.boxBarcode.trim(),
       productBarcode: form.productBarcode.trim(), category: form.category,
-      image: form.image || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400&h=400&fit=crop',
+      image: form.image,
       costPrice: parseFloat(form.costPrice), sellingPrice: parseFloat(form.sellingPrice),
       unitPrice: parseFloat(form.unitPrice),
       boxQuantity: Math.trunc(Number(form.boxQuantity)),
@@ -207,9 +208,13 @@ export function SeriesView() {
               return (
                 <tr key={s.id} className="border-b border-border last:border-0 hover:bg-muted/20 cursor-pointer" onClick={() => setDetailSerie(s)}>
                   <td className="px-6 py-4">
-                    <div className="w-12 h-12 bg-muted rounded-lg overflow-hidden">
-                      <img src={s.image} alt={s.name} className="w-full h-full object-cover" />
-                    </div>
+                    <ItemImage
+                      src={s.image}
+                      alt={s.name}
+                      category={s.category}
+                      className="w-12 h-12"
+                      iconClassName="w-5 h-5"
+                    />
                   </td>
                   <td className="px-6 py-4 font-medium">{s.name}</td>
                   <td className="px-6 py-4 text-muted-foreground font-mono text-sm">{s.boxBarcode}</td>
@@ -414,27 +419,30 @@ export function SeriesView() {
                   }}
                   className="border-2 border-dashed border-border rounded-lg p-4 cursor-pointer hover:border-primary/50 transition-colors"
                 >
-                  {form.image ? (
-                    <div className="flex items-center gap-4">
-                      <div className="w-20 h-20 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-                        <img src={form.image} alt="Preview" className="w-full h-full object-cover" />
+                    {form.image ? (
+                      <div className="flex items-center gap-4">
+                        <ItemImage
+                          src={form.image}
+                          alt="Preview"
+                          category={form.category}
+                          className="w-20 h-20 rounded-lg bg-muted flex-shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm mb-1">Image uploaded</p>
+                          <p className="text-xs text-muted-foreground">Click to change</p>
+                        </div>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); updateField('image', ''); }}
+                          className="text-muted-foreground hover:text-destructive">
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm mb-1">Image uploaded</p>
-                        <p className="text-xs text-muted-foreground">Click to change</p>
+                    ) : (
+                      <div className="flex flex-col items-center gap-2 py-2 text-muted-foreground">
+                        <ItemImagePlaceholder category={form.category} className="w-20 h-20 bg-muted flex-shrink-0" iconClassName="w-8 h-8" />
+                        <p className="text-sm">Click to upload image</p>
+                        <p className="text-xs">PNG, JPG up to 5MB</p>
                       </div>
-                      <button type="button" onClick={(e) => { e.stopPropagation(); updateField('image', ''); }}
-                        className="text-muted-foreground hover:text-destructive">
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-2 py-2 text-muted-foreground">
-                      <Upload className="w-8 h-8 opacity-40" />
-                      <p className="text-sm">Click to upload image</p>
-                      <p className="text-xs">PNG, JPG up to 5MB</p>
-                    </div>
-                  )}
+                    )}
                 </div>
               </div>
             </div>
@@ -473,9 +481,13 @@ export function SeriesView() {
             </div>
             <div className="p-5 space-y-4">
               <div className="flex gap-4">
-                <div className="w-20 h-20 bg-muted rounded-lg overflow-hidden flex-shrink-0">
-                  <img src={detailSerie.image} alt={detailSerie.name} className="w-full h-full object-cover" />
-                </div>
+                <ItemImage
+                  src={detailSerie.image}
+                  alt={detailSerie.name}
+                  category={detailSerie.category}
+                  className="w-20 h-20"
+                  iconClassName="w-7 h-7"
+                />
                 <div>
                   <h3 className="font-medium">{detailSerie.name}</h3>
                   <p className="text-sm text-muted-foreground">{detailSerie.category}</p>

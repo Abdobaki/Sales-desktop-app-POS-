@@ -1,15 +1,16 @@
 import { useState, useRef, useEffect } from 'react';
-import { Search, Plus, Minus, X, Printer, ScanBarcode, User, PackageOpen, Pencil } from 'lucide-react';
+import { Search, Plus, Minus, X, Printer, ScanBarcode, User, PackageOpen, Pencil, Trash2 } from 'lucide-react';
 import { productCatalog, getProducts, subscribeProducts, type Product } from './data/products';
 import { getSeries, findSerieByBoxBarcode, findSeriesByProductBarcode, subscribeSeries, getSerieRemainingCount, getSerieAvailableSizes, getSerieBoxQuantity, type Serie } from './data/series';
 import { type Customer } from './data/customers';
 import { checkoutSale } from './data/sales';
 import { getErrorMessage } from './data/shared';
 import { CustomerPicker } from './CustomerPicker';
+import { ItemImage } from './ItemImagePlaceholder';
 
 type CartItem = (Product & { quantity: number; type: 'product' }) |
-  { type: 'serie'; id: string; serieId: string; name: string; image: string; price: number; quantity: number } |
-  { type: 'serie-item'; id: string; serieId: string; serieName: string; size: string; name: string; image: string; price: number; quantity: number };
+  { type: 'serie'; id: string; serieId: string; category: string; name: string; image: string; price: number; quantity: number } |
+  { type: 'serie-item'; id: string; serieId: string; serieName: string; size: string; category: string; name: string; image: string; price: number; quantity: number };
 
 const categories = ['All', 'Shirts', 'Pants', 'Accessories'];
 
@@ -69,16 +70,31 @@ export function POSView() {
 
   const addSerieToCart = (serie: Serie) => {
     const boxQuantity = getSerieBoxQuantity(serie);
-    if (boxQuantity === 0) return;
+    if (boxQuantity === 0) return false;
+
+    const existing = cart.find((item) => item.type === 'serie' && item.serieId === serie.id);
+    if (existing && existing.quantity >= boxQuantity) {
+      return false;
+    }
+
     setCart((prev) => {
-      const existing = prev.find((item) => item.type === 'serie' && item.serieId === serie.id);
-      if (existing) return prev; // Can only add one box
+      const current = prev.find((item) => item.type === 'serie' && item.serieId === serie.id);
+      if (current) {
+        if (current.quantity >= boxQuantity) return prev;
+        return prev.map((item) =>
+          item.type === 'serie' && item.serieId === serie.id ? { ...item, quantity: item.quantity + 1 } : item
+        );
+      }
+
       return [...prev, {
         type: 'serie' as const, id: `serie-${serie.id}`, serieId: serie.id,
-        name: `📦 ${serie.name} (${boxQuantity} box${boxQuantity > 1 ? 'es' : ''})`, image: serie.image,
+        category: serie.category,
+        name: `📦 ${serie.name}`, image: serie.image,
         price: serie.sellingPrice, quantity: 1,
       }];
     });
+
+    return true;
   };
 
   const addSerieItemToCart = (serie: Serie, size: string) => {
@@ -90,6 +106,7 @@ export function POSView() {
       return [...prev, {
         type: 'serie-item' as const, id: cartId, serieId: serie.id,
         serieName: serie.name, size, name: `${serie.name} — Size ${size}`,
+        category: serie.category,
         image: serie.image, price, quantity: 1,
       }];
     });
@@ -123,7 +140,7 @@ export function POSView() {
   };
 
   const startEditQuantity = (item: CartItem) => {
-    if (item.type !== 'product') return;
+    if (item.type === 'serie-item') return;
     setEditingQuantityId(item.id);
     setEditQuantityValue(String(item.quantity));
   };
@@ -145,6 +162,8 @@ export function POSView() {
     const matchesCategory = selectedCategory === 'All' || product.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
+
+  const showAvailableBoxes = searchQuery.trim().length === 0;
 
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const total = subtotal;
@@ -173,6 +192,15 @@ export function POSView() {
     } catch (error) {
       setCheckoutError(getErrorMessage(error));
     }
+  };
+
+  const handleClearAll = () => {
+    setCart([]);
+    setEditingPriceId(null);
+    setEditPriceValue('');
+    setEditingQuantityId(null);
+    setEditQuantityValue('');
+    setCheckoutError('');
   };
 
   const handlePrint = () => {
@@ -225,8 +253,8 @@ export function POSView() {
       if (getSerieBoxQuantity(serieByBox) <= 0) {
         setBarcodeError(`No boxes left for ${serieByBox.name}`);
       } else {
-        addSerieToCart(serieByBox);
-        setBarcodeError('');
+        const added = addSerieToCart(serieByBox);
+        setBarcodeError(added ? '' : `No boxes left for ${serieByBox.name}`);
       }
       setBarcodeInput('');
       barcodeRef.current?.focus();
@@ -314,19 +342,17 @@ export function POSView() {
         </div>
 
         {/* Series Cards */}
-        {series.filter(s => getSerieBoxQuantity(s) > 0).length > 0 && (
+        {showAvailableBoxes && series.filter(s => getSerieBoxQuantity(s) > 0).length > 0 && (
           <div className="mb-6">
             <h3 className="text-sm text-muted-foreground mb-3 flex items-center gap-1.5"><PackageOpen className="w-4 h-4" /> Available Boxes</h3>
             <div className="grid grid-cols-3 gap-4">
               {series.filter(s => getSerieBoxQuantity(s) > 0).map(s => (
-                <button key={s.id} onClick={() => addSerieToCart(s)}
+                <button key={s.id} onClick={() => { addSerieToCart(s); }}
                   className="bg-card border-2 border-primary/20 rounded-lg p-4 text-left hover:border-primary transition-colors relative">
                   <div className="absolute top-2 right-2 bg-primary text-primary-foreground text-xs px-2 py-0.5 rounded-full">
                     📦 {getSerieBoxQuantity(s)} box{getSerieBoxQuantity(s) > 1 ? 'es' : ''}
                   </div>
-                  <div className="aspect-square bg-muted rounded-lg mb-3 overflow-hidden">
-                    <img src={s.image} alt={s.name} className="w-full h-full object-cover" />
-                  </div>
+                  <ItemImage src={s.image} alt={s.name} category={s.category} className="aspect-square bg-muted rounded-lg mb-3" iconClassName="w-8 h-8" />
                   <div className="text-sm text-muted-foreground mb-1">{s.category}</div>
                   <div className="mb-2 text-sm">{s.name}</div>
                   <div className="text-primary">{s.sellingPrice.toFixed(2)} DZ</div>
@@ -341,11 +367,7 @@ export function POSView() {
           {filteredProducts.map((product) => (
             <button key={product.id} onClick={() => addProductToCart(product)}
               className="bg-card border border-border rounded-lg p-4 text-left hover:border-primary transition-colors">
-              <div className="aspect-square bg-slate-100 rounded-lg mb-3 overflow-hidden border border-slate-200">
-                {product.image ? (
-                  <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
-                ) : null}
-              </div>
+              <ItemImage src={product.image} alt={product.name} category={product.category} className="aspect-square bg-slate-100 rounded-lg mb-3 border border-slate-200" iconClassName="w-8 h-8" />
               <div className="text-sm text-muted-foreground mb-1">{product.category}</div>
               <div className="mb-2">{product.name}</div>
               <div className="text-primary">{formatDz(product.price)}</div>
@@ -356,7 +378,19 @@ export function POSView() {
 
       {/* Cart Panel */}
       <div className="flex-[40] bg-card border-l border-border flex flex-col">
-        <div className="p-6 border-b border-border"><h2>Current Order</h2></div>
+        <div className="p-6 border-b border-border flex items-center justify-between gap-3">
+          <h2>Current Order</h2>
+          {cart.length > 0 && (
+            <button
+              type="button"
+              onClick={handleClearAll}
+              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-red-600 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+              Clear All
+            </button>
+          )}
+        </div>
 
         {/* Customer Selection */}
         <div className="px-6 pt-4">
@@ -386,11 +420,7 @@ export function POSView() {
             <div className="space-y-4">
               {cart.map((item) => (
                 <div key={item.id} className="flex gap-3">
-                  <div className={`w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 border border-slate-200 ${item.type === 'serie' ? 'ring-2 ring-primary/30' : 'bg-slate-100'}`}>
-                    {item.image ? (
-                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-                    ) : null}
-                  </div>
+                  <ItemImage src={item.image} alt={item.name} category={item.category} className={`w-16 h-16 rounded-lg flex-shrink-0 border border-slate-200 ${item.type === 'serie' ? 'ring-2 ring-primary/30' : 'bg-slate-100'}`} iconClassName="w-6 h-6" />
                   <div className="flex-1 min-w-0">
                     <div className="mb-1 text-sm">{item.name}</div>
                     {editingPriceId === item.id ? (
@@ -411,7 +441,7 @@ export function POSView() {
                         <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                       </button>
                     )}
-                    {item.type === 'product' && (
+                    {(item.type === 'product' || item.type === 'serie') ? (
                       <div className="flex items-center gap-2 mt-2">
                         <button onClick={() => updateQuantity(item.id, -1)} className="w-8 h-8 rounded bg-secondary hover:bg-muted flex items-center justify-center"><Minus className="w-4 h-4" /></button>
                         {editingQuantityId === item.id ? (
@@ -424,7 +454,7 @@ export function POSView() {
                               value={editQuantityValue}
                               onChange={(e) => setEditQuantityValue(e.target.value)}
                               onBlur={() => confirmEditQuantity(item.id)}
-                              className="w-16 px-2 py-1 text-center text-sm border border-primary rounded-md bg-primary/5 focus:outline-none focus:ring-1 focus:ring-primary"
+                            className="w-16 px-2 py-1 text-center text-sm border border-primary rounded-md bg-primary/5 focus:outline-none focus:ring-1 focus:ring-primary"
                             />
                           </form>
                         ) : (
@@ -440,7 +470,7 @@ export function POSView() {
                         )}
                         <button onClick={() => updateQuantity(item.id, 1)} className="w-8 h-8 rounded bg-secondary hover:bg-muted flex items-center justify-center"><Plus className="w-4 h-4" /></button>
                       </div>
-                    )}
+                    ) : null}
                   </div>
                   <button onClick={() => removeFromCart(item.id)} className="text-muted-foreground hover:text-destructive"><X className="w-6 h-6" /></button>
                 </div>

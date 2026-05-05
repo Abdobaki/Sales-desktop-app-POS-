@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Plus, MoreVertical, ChevronDown, X, Pencil, Trash2, Upload, ScanBarcode } from 'lucide-react';
+import { Search, Plus, MoreVertical, ChevronDown, X, Pencil, Trash2, ScanBarcode } from 'lucide-react';
 import { getProducts, addProduct, updateProduct, deleteProduct, subscribeProducts, type Product } from './data/products';
 import { getSuppliers, subscribeSuppliers } from './data/suppliers';
 import { getErrorMessage, isUniqueConstraintError } from './data/shared';
 import { BarcodeGeneratorModal, BarcodeDisplay, generateBarcodeNumber } from './BarcodeGenerator';
+import { ItemImage, ItemImagePlaceholder } from './ItemImagePlaceholder';
 
 const categories = ['All Categories', 'Shirts', 'Pants', 'Accessories'];
 const productCategories = ['Shirts', 'Pants', 'Accessories'];
@@ -284,13 +285,13 @@ export function InventoryView() {
             {filteredInventory.map((item, index) => (
               <tr key={item.id} className="border-b border-border last:border-0 hover:bg-muted/20">
                 <td className="px-6 py-4">
-                  {item.image ? (
-                    <div className="w-12 h-12 bg-muted rounded-lg overflow-hidden">
-                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-                    </div>
-                  ) : (
-                    <div className="w-12 h-12 bg-slate-100 rounded-lg border border-slate-200" />
-                  )}
+                  <ItemImage
+                    src={item.image}
+                    alt={item.name}
+                    category={item.category}
+                    className="w-12 h-12"
+                    iconClassName="w-5 h-5"
+                  />
                 </td>
                 <td className="px-6 py-4 text-muted-foreground">{item.sku}</td>
                 <td className="px-6 py-4 text-muted-foreground font-mono text-sm">{item.barcode}</td>
@@ -518,30 +519,33 @@ export function InventoryView() {
                   }}
                   className="border-2 border-dashed border-border rounded-lg p-4 cursor-pointer hover:border-primary/50 transition-colors"
                 >
-                  {form.image ? (
-                    <div className="flex items-center gap-4">
-                      <div className="w-20 h-20 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-                        <img src={form.image} alt="Preview" className="w-full h-full object-cover" />
+                    {form.image ? (
+                      <div className="flex items-center gap-4">
+                        <ItemImage
+                          src={form.image}
+                          alt="Preview"
+                          category={form.category}
+                          className="w-20 h-20 rounded-lg bg-muted flex-shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm mb-1">Image uploaded</p>
+                          <p className="text-xs text-muted-foreground">Click to change</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); updateField('image', ''); }}
+                          className="text-muted-foreground hover:text-destructive"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm mb-1">Image uploaded</p>
-                        <p className="text-xs text-muted-foreground">Click to change</p>
+                    ) : (
+                      <div className="flex flex-col items-center gap-2 py-2 text-muted-foreground">
+                        <ItemImagePlaceholder category={form.category} className="w-20 h-20 bg-muted flex-shrink-0" iconClassName="w-8 h-8" />
+                        <p className="text-sm">Click to upload image</p>
+                        <p className="text-xs">PNG, JPG up to 5MB</p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); updateField('image', ''); }}
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-2 py-2 text-muted-foreground">
-                      <Upload className="w-8 h-8 opacity-40" />
-                      <p className="text-sm">Click to upload image</p>
-                      <p className="text-xs">PNG, JPG up to 5MB</p>
-                    </div>
-                  )}
+                    )}
                 </div>
               </div>
             </div>

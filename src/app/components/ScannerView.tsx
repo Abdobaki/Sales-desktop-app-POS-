@@ -6,10 +6,11 @@ import { type Customer } from './data/customers';
 import { checkoutSale } from './data/sales';
 import { getErrorMessage } from './data/shared';
 import { CustomerPicker } from './CustomerPicker';
+import { ItemImage } from './ItemImagePlaceholder';
 
 type CartItem = (Product & { quantity: number; type: 'product' }) |
-  { type: 'serie'; id: string; serieId: string; name: string; image: string; price: number; quantity: number } |
-  { type: 'serie-item'; id: string; serieId: string; serieName: string; size: string; name: string; image: string; price: number; quantity: number };
+  { type: 'serie'; id: string; serieId: string; category: string; name: string; image: string; price: number; quantity: number } |
+  { type: 'serie-item'; id: string; serieId: string; serieName: string; size: string; category: string; name: string; image: string; price: number; quantity: number };
 
 type ScanLog = { id: string; barcode: string; productName: string | null; success: boolean; time: string };
 
@@ -17,7 +18,7 @@ export function ScannerView() {
   const [products, setProducts] = useState(getProducts);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [barcodeInput, setBarcodeInput] = useState('');
-  const [lastScanned, setLastScanned] = useState<{ name: string; image: string; barcode: string; price: number } | null>(null);
+  const [lastScanned, setLastScanned] = useState<{ name: string; image: string; category?: string; barcode: string; price: number } | null>(null);
   const [scanError, setScanError] = useState('');
   const [scanLog, setScanLog] = useState<ScanLog[]>([]);
   const [series, setSeries] = useState(getSeries);
@@ -52,12 +53,26 @@ export function ScannerView() {
 
   const addSerieToCart = (serie: Serie) => {
     const boxQuantity = getSerieBoxQuantity(serie);
-    if (boxQuantity === 0) return;
+    if (boxQuantity === 0) return false;
+
+    const existing = cart.find((item) => item.type === 'serie' && item.serieId === serie.id);
+    if (existing && existing.quantity >= boxQuantity) {
+      return false;
+    }
+
     setCart((prev) => {
-      const existing = prev.find((item) => item.type === 'serie' && item.serieId === serie.id);
-      if (existing) return prev;
-      return [...prev, { type: 'serie' as const, id: `serie-${serie.id}`, serieId: serie.id, name: `📦 ${serie.name} (${boxQuantity} box${boxQuantity > 1 ? 'es' : ''})`, image: serie.image, price: serie.sellingPrice, quantity: 1 }];
+      const current = prev.find((item) => item.type === 'serie' && item.serieId === serie.id);
+      if (current) {
+        if (current.quantity >= boxQuantity) return prev;
+        return prev.map((item) =>
+          item.type === 'serie' && item.serieId === serie.id ? { ...item, quantity: item.quantity + 1 } : item
+        );
+      }
+
+      return [...prev, { type: 'serie' as const, id: `serie-${serie.id}`, serieId: serie.id, category: serie.category, name: `📦 ${serie.name}`, image: serie.image, price: serie.sellingPrice, quantity: 1 }];
     });
+
+    return true;
   };
 
   const addSerieItemToCart = (serie: Serie, size: string) => {
@@ -66,7 +81,7 @@ export function ScannerView() {
     setCart((prev) => {
       const existing = prev.find((item) => item.type === 'serie-item' && item.id === cartId);
       if (existing) return prev;
-      return [...prev, { type: 'serie-item' as const, id: cartId, serieId: serie.id, serieName: serie.name, size, name: `${serie.name} — Size ${size}`, image: serie.image, price, quantity: 1 }];
+      return [...prev, { type: 'serie-item' as const, id: cartId, serieId: serie.id, serieName: serie.name, size, category: serie.category, name: `${serie.name} — Size ${size}`, image: serie.image, price, quantity: 1 }];
     });
   };
 
@@ -105,10 +120,10 @@ export function ScannerView() {
         setScanError(`No boxes left for ${serieByBox.name}`);
         setScanLog(prev => [{ id: `${Date.now()}`, barcode: code, productName: null, success: false, time: now }, ...prev].slice(0, 20));
       } else {
-        addSerieToCart(serieByBox);
-        setLastScanned({ name: serieByBox.name, image: serieByBox.image, barcode: code, price: serieByBox.sellingPrice });
-        setScanError('');
-        setScanLog(prev => [{ id: `${Date.now()}`, barcode: code, productName: `📦 ${serieByBox.name}`, success: true, time: now }, ...prev].slice(0, 20));
+        const added = addSerieToCart(serieByBox);
+        setLastScanned({ name: serieByBox.name, image: serieByBox.image, category: serieByBox.category, barcode: code, price: serieByBox.sellingPrice });
+        setScanError(added ? '' : `No boxes left for ${serieByBox.name}`);
+        setScanLog(prev => [{ id: `${Date.now()}`, barcode: code, productName: `📦 ${serieByBox.name}`, success: added, time: now }, ...prev].slice(0, 20));
       }
       setBarcodeInput(''); inputRef.current?.focus(); return;
     }
@@ -135,7 +150,7 @@ export function ScannerView() {
     // 3. Regular product
     if (foundProduct) {
       addProductToCart(foundProduct);
-      setLastScanned({ name: foundProduct.name, image: foundProduct.image, barcode: foundProduct.barcode, price: foundProduct.price });
+      setLastScanned({ name: foundProduct.name, image: foundProduct.image, category: foundProduct.category, barcode: foundProduct.barcode, price: foundProduct.price });
       setScanError('');
       setScanLog(prev => [{ id: `${Date.now()}`, barcode: code, productName: foundProduct.name, success: true, time: now }, ...prev].slice(0, 20));
     } else {
@@ -203,11 +218,7 @@ export function ScannerView() {
 
         {lastScanned && (
           <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-xl flex items-center gap-4">
-            <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-slate-100 border border-slate-200">
-              {lastScanned.image ? (
-                <img src={lastScanned.image} alt={lastScanned.name} className="w-full h-full object-cover" />
-              ) : null}
-            </div>
+            <ItemImage src={lastScanned.image} alt={lastScanned.name} category={lastScanned.category} className="w-16 h-16 rounded-lg flex-shrink-0 border border-slate-200" iconClassName="w-6 h-6" />
             <div className="flex-1">
               <div className="flex items-center gap-2 text-green-700 mb-1"><CheckCircle2 className="w-5 h-5" /><span className="text-sm">Item added</span></div>
               <div>{lastScanned.name}</div>
@@ -221,23 +232,19 @@ export function ScannerView() {
           <h3 className="mb-3 text-sm text-muted-foreground">Quick Reference — Sample Barcodes</h3>
           <div className="grid grid-cols-2 gap-2">
             {series.filter(s => getSerieBoxQuantity(s) > 0).map(s => (
-              <button key={s.id} onClick={() => { addSerieToCart(s); setLastScanned({ name: s.name, image: s.image, barcode: s.boxBarcode, price: s.sellingPrice }); setScanError(''); }}
+              <button key={s.id} onClick={() => { addSerieToCart(s); setLastScanned({ name: s.name, image: s.image, category: s.category, barcode: s.boxBarcode, price: s.sellingPrice }); setScanError(''); }}
                 className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-colors text-left bg-primary/5 border border-primary/10">
-                <div className="w-8 h-8 rounded bg-muted overflow-hidden flex-shrink-0"><img src={s.image} alt={s.name} className="w-full h-full object-cover" /></div>
+                <ItemImage src={s.image} alt={s.name} category={s.category} className="w-8 h-8 rounded flex-shrink-0 border border-slate-200 bg-slate-100" iconClassName="w-4 h-4" />
                 <div className="min-w-0"><div className="text-sm truncate">📦 {s.name} ({getSerieBoxQuantity(s)} box{getSerieBoxQuantity(s) > 1 ? 'es' : ''})</div><div className="text-xs text-muted-foreground font-mono">{s.boxBarcode}</div></div>
               </button>
             ))}
             {products.map(p => (
               <button
                 key={p.id}
-                onClick={() => { addProductToCart(p); setLastScanned({ name: p.name, image: p.image, barcode: p.barcode, price: p.price }); setScanError(''); setScanLog(prev => [{ id: `${Date.now()}`, barcode: p.barcode, productName: p.name, success: true, time: new Date().toLocaleTimeString() }, ...prev].slice(0, 20)); }}
+                onClick={() => { addProductToCart(p); setLastScanned({ name: p.name, image: p.image, category: p.category, barcode: p.barcode, price: p.price }); setScanError(''); setScanLog(prev => [{ id: `${Date.now()}`, barcode: p.barcode, productName: p.name, success: true, time: new Date().toLocaleTimeString() }, ...prev].slice(0, 20)); }}
                 className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-colors text-left"
               >
-                <div className="w-8 h-8 rounded bg-slate-100 overflow-hidden flex-shrink-0 border border-slate-200">
-                  {p.image ? (
-                    <img src={p.image} alt={p.name} className="w-full h-full object-cover" />
-                  ) : null}
-                </div>
+                <ItemImage src={p.image} alt={p.name} category={p.category} className="w-8 h-8 rounded flex-shrink-0 border border-slate-200 bg-slate-100" iconClassName="w-4 h-4" />
                 <div className="min-w-0">
                   <div className="text-sm truncate">{p.name}</div>
                   <div className="text-xs text-muted-foreground font-mono">{p.barcode}</div>
@@ -297,11 +304,7 @@ export function ScannerView() {
             <div className="space-y-4">
               {cart.map(item => (
                 <div key={item.id} className="flex gap-3">
-                  <div className={`w-14 h-14 rounded-lg overflow-hidden flex-shrink-0 border border-slate-200 ${item.type === 'serie' ? 'ring-2 ring-primary/30' : 'bg-slate-100'}`}>
-                    {item.image ? (
-                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-                    ) : null}
-                  </div>
+                  <ItemImage src={item.image} alt={item.name} category={item.category} className={`w-14 h-14 rounded-lg flex-shrink-0 border border-slate-200 ${item.type === 'serie' ? 'ring-2 ring-primary/30' : 'bg-slate-100'}`} iconClassName="w-5 h-5" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm mb-0.5 truncate">{item.name}</div>
                     {editingPriceId === item.id ? (
@@ -322,7 +325,7 @@ export function ScannerView() {
                         <Pencil className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity" />
                       </button>
                     )}
-                    {item.type === 'product' && (
+                    {(item.type === 'product' || item.type === 'serie') && (
                       <div className="flex items-center gap-2">
                         <button onClick={() => updateQuantity(item.id, -1)} className="w-6 h-6 rounded bg-secondary hover:bg-muted flex items-center justify-center"><Minus className="w-3 h-3" /></button>
                         <span className="w-6 text-center text-sm">{item.quantity}</span>
