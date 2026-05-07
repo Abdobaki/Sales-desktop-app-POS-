@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, X, Trash2 } from 'lucide-react';
 import { type Product } from './data/products';
+import { ProductPicker } from './ProductPicker';
 import { getSerieBoxQuantity, type Serie, type SerieComponent } from './data/series';
 
 type BoxSaleModalProps = {
@@ -196,21 +197,13 @@ export function BoxSaleModal({ serie, products, onConfirm, onClose }: BoxSaleMod
                     <div className="grid gap-3 md:grid-cols-[1.6fr_0.5fr_auto] md:items-end">
                       <div>
                         <label className="mb-1 block text-xs text-muted-foreground">Product</label>
-                        <select
-                          value={component.productId}
-                          onChange={(event) => {
-                            const selected = products.find((product) => product.id === event.target.value);
-                            updateComponent(index, { productId: event.target.value, label: selected?.name });
+                        <ProductPicker
+                          products={products}
+                          selectedProductId={component.productId}
+                          onSelect={(product) => {
+                            updateComponent(index, { productId: product.id, label: product.name });
                           }}
-                          className="w-full rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm"
-                        >
-                          <option value="">Select a product</option>
-                          {products.map((product) => (
-                            <option key={product.id} value={product.id}>
-                              {product.name} · {product.sku}
-                            </option>
-                          ))}
-                        </select>
+                        />
                       </div>
 
                       <div>

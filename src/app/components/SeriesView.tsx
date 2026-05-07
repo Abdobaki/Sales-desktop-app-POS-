@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Search, Plus, X, Pencil, Trash2, ScanBarcode } from 'lucide-react';
 import { getSeries, addSerie, updateSerie, deleteSerie, refreshSeries, subscribeSeries, getSerieBoxQuantity, type Serie, type SerieComponent } from './data/series';
 import { getProducts, subscribeProducts, type Product } from './data/products';
+import { ProductPicker } from './ProductPicker';
 import { getSuppliers, subscribeSuppliers } from './data/suppliers';
 import { getErrorMessage } from './data/shared';
 import { BarcodeGeneratorModal, BarcodeDisplay } from './BarcodeGenerator';
@@ -403,21 +404,13 @@ export function SeriesView() {
                     return (
                       <div key={`${index}-${component.productId || 'empty'}`} className="grid grid-cols-[1fr_120px_auto] gap-2 items-center rounded-lg border border-border bg-muted/20 p-3">
                         <div>
-                          <select
-                            value={component.productId}
-                            onChange={(event) => {
-                              const selected = products.find((productItem) => productItem.id === event.target.value);
-                              updateComponent(index, { productId: event.target.value, label: selected?.name });
+                          <ProductPicker
+                            products={products}
+                            selectedProductId={component.productId}
+                            onSelect={(product) => {
+                              updateComponent(index, { productId: product.id, label: product.name });
                             }}
-                            className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm"
-                          >
-                            <option value="">Select product</option>
-                            {products.map((productItem) => (
-                              <option key={productItem.id} value={productItem.id}>
-                                {productItem.name} · {productItem.sku} · stock {productItem.stock}
-                              </option>
-                            ))}
-                          </select>
+                          />
                           {component.label && !component.productId && <p className="mt-1 text-xs text-muted-foreground">Legacy label: {component.label}</p>}
                         </div>
                         <div>
