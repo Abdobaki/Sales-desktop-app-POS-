@@ -269,6 +269,39 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 5,
+    up(db) {
+      db.exec(`
+        ALTER TABLE series_items ADD COLUMN product_id TEXT;
+
+        CREATE INDEX IF NOT EXISTS idx_series_items_product ON series_items(product_id);
+
+        UPDATE series_items
+        SET product_id = (
+          SELECT s.product_id
+          FROM series s
+          WHERE s.id = series_items.series_id AND s.product_id IS NOT NULL
+        )
+        WHERE product_id IS NULL
+          AND EXISTS (
+            SELECT 1
+            FROM series s
+            WHERE s.id = series_items.series_id AND s.product_id IS NOT NULL
+          );
+
+        UPDATE series_items
+        SET product_id = (
+          SELECT p.id
+          FROM series s
+          JOIN products p ON lower(p.barcode) = lower(s.product_barcode) OR lower(p.sku) = lower(s.product_barcode)
+          WHERE s.id = series_items.series_id
+          LIMIT 1
+        )
+        WHERE product_id IS NULL;
+      `);
+    },
+  },
 ];
 
 function getUserVersion(db) {

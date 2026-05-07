@@ -63,7 +63,15 @@ function textOrNull(value) {
   return text.length > 0 ? text : null;
 }
 
-function deepCloneSeriesItem(item) {
+function deepCloneSeriesComponent(component) {
+  return {
+    productId: String(component.productId ?? component.product_id ?? ''),
+    quantity: toPositiveInteger(component.quantity, 'Series component quantity'),
+    label: component.label ? String(component.label) : component.size ? String(component.size) : undefined,
+  };
+}
+
+function deepCloneSeriesLegacyItem(item) {
   return {
     size: String(item.size ?? ''),
     quantity: toPositiveInteger(item.quantity, 'Series item quantity'),
@@ -71,8 +79,39 @@ function deepCloneSeriesItem(item) {
   };
 }
 
-function composeSeriesRows(seriesRows, itemRows) {
+function buildProductLookup(productRows) {
+  const lookup = new Map();
+
+  for (const row of productRows) {
+    const product = {
+      id: String(row.id),
+      barcode: String(row.barcode ?? ''),
+      sku: String(row.sku ?? ''),
+      name: String(row.name ?? ''),
+      cost_price_cents: row.cost_price_cents,
+    };
+
+    lookup.set(product.id, product);
+    if (product.barcode) {
+      lookup.set(product.barcode, product);
+      lookup.set(product.barcode.toLowerCase(), product);
+    }
+    if (product.sku) {
+      lookup.set(product.sku, product);
+      lookup.set(product.sku.toLowerCase(), product);
+    }
+    if (product.name) {
+      lookup.set(product.name, product);
+      lookup.set(product.name.toLowerCase(), product);
+    }
+  }
+
+  return lookup;
+}
+
+function composeSeriesRows(seriesRows, itemRows, productRows = []) {
   const itemsBySeriesId = new Map();
+  const productLookup = buildProductLookup(productRows);
 
   for (const item of itemRows) {
     const seriesId = String(item.series_id ?? '');
@@ -82,6 +121,7 @@ function composeSeriesRows(seriesRows, itemRows) {
 
     const list = itemsBySeriesId.get(seriesId) ?? [];
     list.push({
+      productId: item.product_id ? String(item.product_id) : '',
       size: String(item.size ?? ''),
       quantity: toPositiveInteger(item.quantity, 'Series item quantity'),
       sold: Math.max(0, Math.trunc(toNumber(item.sold, 0))),
@@ -89,55 +129,97 @@ function composeSeriesRows(seriesRows, itemRows) {
     itemsBySeriesId.set(seriesId, list);
   }
 
-  return seriesRows.map((row) => ({
-    id: String(row.id),
-    name: String(row.name ?? ''),
-    boxBarcode: String(row.box_barcode ?? ''),
-    productBarcode: String(row.product_barcode ?? ''),
-    productId: row.product_id ? String(row.product_id) : undefined,
-    category: String(row.category ?? ''),
-    image: String(row.image_url ?? ''),
-    costPrice: toDollars(row.cost_price_cents),
-    sellingPrice: toDollars(row.selling_price_cents),
-    unitPrice: toDollars(row.unit_price_cents),
-    boxQuantity: toNonNegativeInteger(row.box_quantity ?? 1, 'Box quantity'),
-    items: (itemsBySeriesId.get(String(row.id)) ?? []).map((item) => deepCloneSeriesItem(item)),
-    supplierId: row.supplier_id ? String(row.supplier_id) : undefined,
-    createdAt: String(row.created_at ?? '').slice(0, 10),
-  }));
+  return seriesRows.map((row) => {
+    const seriesId = String(row.id);
+    const legacyProductId = row.product_id ? String(row.product_id) : '';
+    const rawItems = itemsBySeriesId.get(seriesId) ?? [];
+    const components = [];
+    const legacyItems = [];
+
+    for (const rawItem of rawItems) {
+      const resolvedProduct =
+        (rawItem.productId && productLookup.get(rawItem.productId)) ||
+        (rawItem.size && productLookup.get(rawItem.size)) ||
+        (rawItem.size && productLookup.get(rawItem.size.toLowerCase())) ||
+        (legacyProductId && productLookup.get(legacyProductId)) ||
+        null;
+      const productId = rawItem.productId || resolvedProduct?.id || legacyProductId || '';
+
+      if (productId) {
+        components.push({
+          productId,
+          quantity: rawItem.quantity,
+          label: rawItem.size || resolvedProduct?.name || resolvedProduct?.sku || undefined,
+        });
+        continue;
+      }
+
+      legacyItems.push(deepCloneSeriesLegacyItem(rawItem));
+    }
+
+    return {
+      id: seriesId,
+      name: String(row.name ?? ''),
+      boxBarcode: String(row.box_barcode ?? ''),
+      productBarcode: String(row.product_barcode ?? ''),
+      productId: row.product_id ? String(row.product_id) : undefined,
+      category: String(row.category ?? ''),
+      image: String(row.image_url ?? ''),
+      costPrice: toDollars(row.cost_price_cents),
+      sellingPrice: toDollars(row.selling_price_cents),
+      unitPrice: toDollars(row.unit_price_cents),
+      boxQuantity: toNonNegativeInteger(row.box_quantity ?? 1, 'Box quantity'),
+      components,
+      legacyItems: legacyItems.length > 0 ? legacyItems : undefined,
+      supplierId: row.supplier_id ? String(row.supplier_id) : undefined,
+      createdAt: String(row.created_at ?? '').slice(0, 10),
+    };
+  });
 }
 
 function buildSeriesPayload(rawPayload) {
   const payload = normalizeObject(rawPayload, 'payload');
   const values = payload.values !== undefined ? normalizeObject(payload.values, 'values') : payload;
   const id = textOrNull(payload.id ?? values.id);
-  const items = Array.isArray(values.items) ? values.items.map((item) => deepCloneSeriesItem(item)) : [];
+  const rawComponents = Array.isArray(values.components)
+    ? values.components
+    : Array.isArray(values.items)
+      ? values.items
+      : [];
+  const components = rawComponents.map((component) => {
+    const raw = normalizeObject(component, 'component');
+    return {
+      productId: textOrNull(raw.productId ?? raw.product_id),
+      quantity: toPositiveInteger(raw.quantity ?? raw.componentQuantity ?? raw.component_quantity ?? 1, 'Series component quantity'),
+      label: textOrNull(raw.label ?? raw.size),
+    };
+  });
 
-  if (items.length === 0) {
-    throw new Error('Series must contain at least one size item.');
+  if (components.length === 0) {
+    throw new Error('Series must contain at least one product component.');
   }
 
-  const sizes = new Set();
-  for (const item of items) {
-    if (!item.size) {
-      throw new Error('Series item size is required.');
+  const productIds = new Set();
+  for (const component of components) {
+    if (!component.productId) {
+      throw new Error('Each series component must reference a product.');
     }
 
-    if (sizes.has(item.size)) {
-      throw new Error(`Duplicate size detected: ${item.size}`);
+    if (productIds.has(component.productId)) {
+      throw new Error(`Duplicate product detected: ${component.productId}`);
     }
 
-    sizes.add(item.size);
+    productIds.add(component.productId);
   }
 
   const name = String(values.name ?? '').trim();
   const boxBarcode = String(values.boxBarcode ?? values.box_barcode ?? '').trim();
-  const productBarcode = String(values.productBarcode ?? values.product_barcode ?? '').trim();
   const category = String(values.category ?? '').trim();
   const costPrice = toNumber(values.costPrice ?? values.cost_price ?? 0, NaN);
   const sellingPrice = toNumber(values.sellingPrice ?? values.selling_price ?? 0, NaN);
-  const unitPrice = toNumber(values.unitPrice ?? values.unit_price ?? 0, NaN);
+  const productBarcode = String(values.productBarcode ?? values.product_barcode ?? '').trim();
   const boxQuantity = toNonNegativeInteger(values.boxQuantity ?? values.box_quantity ?? 1, 'Box quantity');
+  const unitPrice = toNumber(values.unitPrice ?? values.unit_price ?? sellingPrice, NaN);
 
   if (!name) {
     throw new Error('Series name is required.');
@@ -145,10 +227,6 @@ function buildSeriesPayload(rawPayload) {
 
   if (!boxBarcode) {
     throw new Error('Box barcode is required.');
-  }
-
-  if (!productBarcode) {
-    throw new Error('Product barcode is required.');
   }
 
   if (!category) {
@@ -171,8 +249,7 @@ function buildSeriesPayload(rawPayload) {
     id,
     name,
     boxBarcode,
-    productBarcode,
-    productId: textOrNull(values.productId ?? values.product_id),
+    productBarcode: productBarcode || `${boxBarcode}-BOX`,
     category,
     image: String(values.image ?? values.image_url ?? '').trim(),
     costPrice,
@@ -180,7 +257,7 @@ function buildSeriesPayload(rawPayload) {
     unitPrice,
     boxQuantity,
     supplierId: textOrNull(values.supplierId ?? values.supplier_id),
-    items,
+    components,
   };
 }
 
@@ -193,8 +270,9 @@ function getSeriesById(db, id) {
   const itemRows = db
     .prepare('SELECT * FROM series_items WHERE series_id = ? ORDER BY sort_order ASC, size ASC')
     .all(id);
+  const productRows = db.prepare('SELECT id, barcode, sku, name FROM products').all();
 
-  return composeSeriesRows([seriesRow], itemRows)[0] ?? null;
+  return composeSeriesRows([seriesRow], itemRows, productRows)[0] ?? null;
 }
 
 function listSeries(db, rawOptions = {}) {
@@ -228,13 +306,21 @@ function listSeries(db, rawOptions = {}) {
   const itemRows = db
     .prepare(`SELECT * FROM series_items WHERE series_id IN (${ids.map(() => '?').join(', ')}) ORDER BY series_id ASC, sort_order ASC, size ASC`)
     .all(...ids);
+  const productRows = db.prepare('SELECT id, barcode, sku, name FROM products').all();
 
-  return composeSeriesRows(seriesRows, itemRows);
+  return composeSeriesRows(seriesRows, itemRows, productRows);
 }
 
 function persistSeries(db, rawPayload) {
   const payload = buildSeriesPayload(rawPayload);
   const now = nowIso();
+  const productRows = db.prepare('SELECT id, barcode, sku, name, cost_price_cents FROM products').all();
+  const productLookup = buildProductLookup(productRows);
+  const computedCostPrice = payload.components.reduce((sum, component) => {
+    const product = productLookup.get(component.productId);
+    return sum + (product ? toDollars(product.cost_price_cents) * Math.max(1, Math.trunc(component.quantity)) : 0);
+  }, 0);
+  const costPrice = Number.isFinite(payload.costPrice) && payload.costPrice > 0 ? payload.costPrice : computedCostPrice;
 
   const save = db.transaction(() => {
     let seriesId = payload.id;
@@ -243,38 +329,37 @@ function persistSeries(db, rawPayload) {
     if (existing) {
       db.prepare(`
         UPDATE series
-        SET name = ?, box_barcode = ?, product_barcode = ?, product_id = ?, category = ?, image_url = ?, cost_price_cents = ?, selling_price_cents = ?, unit_price_cents = ?, box_quantity = ?, supplier_id = ?, updated_at = ?
+        SET name = ?, box_barcode = ?, product_barcode = ?, category = ?, image_url = ?, cost_price_cents = ?, selling_price_cents = ?, unit_price_cents = ?, box_quantity = ?, supplier_id = ?, updated_at = ?
         WHERE id = ?
       `).run(
         payload.name,
         payload.boxBarcode,
         payload.productBarcode,
-        payload.productId,
         payload.category,
         payload.image || null,
-        toCents(payload.costPrice),
+        toCents(costPrice),
         toCents(payload.sellingPrice),
-        toCents(payload.unitPrice),
+        toCents(payload.unitPrice || payload.sellingPrice),
         payload.boxQuantity,
         payload.supplierId,
         now,
         seriesId
       );
 
-      const existingItems = db.prepare('SELECT size, sold FROM series_items WHERE series_id = ?').all(seriesId);
-      const soldBySize = new Map(existingItems.map((item) => [String(item.size), Math.max(0, Math.trunc(toNumber(item.sold, 0)))]));
-
       db.prepare('DELETE FROM series_items WHERE series_id = ?').run(seriesId);
 
       const insertItem = db.prepare(`
-        INSERT INTO series_items (series_id, size, quantity, sold, sort_order, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO series_items (series_id, size, quantity, sold, sort_order, created_at, updated_at, product_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
-      payload.items.forEach((item, index) => {
-        const previousSold = soldBySize.get(item.size) ?? Math.max(0, Math.trunc(toNumber(item.sold, 0)));
-        const sold = Math.min(previousSold, item.quantity);
-        insertItem.run(seriesId, item.size, item.quantity, sold, index, now, now);
+      payload.components.forEach((component, index) => {
+        const product = productLookup.get(component.productId);
+        if (!product) {
+          throw new Error(`Product not found: ${component.productId}`);
+        }
+
+        insertItem.run(seriesId, component.label || product.name || product.sku || component.productId, component.quantity, 0, index, now, now, component.productId);
       });
 
       return getSeriesById(db, seriesId);
@@ -294,12 +379,12 @@ function persistSeries(db, rawPayload) {
       payload.name,
       payload.boxBarcode,
       payload.productBarcode,
-      payload.productId,
+      payload.components[0]?.productId || null,
       payload.category,
       payload.image || null,
-      toCents(payload.costPrice),
+      toCents(costPrice),
       toCents(payload.sellingPrice),
-      toCents(payload.unitPrice),
+      toCents(payload.unitPrice || payload.sellingPrice),
       payload.boxQuantity,
       payload.supplierId,
       now,
@@ -307,12 +392,17 @@ function persistSeries(db, rawPayload) {
     );
 
     const insertItem = db.prepare(`
-      INSERT INTO series_items (series_id, size, quantity, sold, sort_order, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO series_items (series_id, size, quantity, sold, sort_order, created_at, updated_at, product_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    payload.items.forEach((item, index) => {
-      insertItem.run(seriesId, item.size, item.quantity, Math.min(Math.max(0, item.sold), item.quantity), index, now, now);
+    payload.components.forEach((component, index) => {
+      const product = productLookup.get(component.productId);
+      if (!product) {
+        throw new Error(`Product not found: ${component.productId}`);
+      }
+
+      insertItem.run(seriesId, component.label || product.name || product.sku || component.productId, component.quantity, 0, index, now, now, component.productId);
     });
 
     return getSeriesById(db, seriesId);
@@ -359,7 +449,9 @@ function loadSeries(db, seriesId) {
   }
 
   const items = db.prepare('SELECT * FROM series_items WHERE series_id = ? ORDER BY sort_order ASC, size ASC').all(seriesId);
-  return { seriesRow, items };
+  const productRows = db.prepare('SELECT id, barcode, sku, name FROM products').all();
+  const series = composeSeriesRows([seriesRow], items, productRows)[0] ?? null;
+  return series;
 }
 
 function checkoutSale(db, rawPayload = {}) {
@@ -386,6 +478,17 @@ function checkoutSale(db, rawPayload = {}) {
       throw new Error('Item price must be a non-negative number.');
     }
 
+    const components = Array.isArray(item.components)
+      ? item.components.map((rawComponent) => {
+          const component = normalizeObject(rawComponent, 'component');
+          return {
+            productId: String(component.productId ?? component.product_id ?? '').trim(),
+            quantity: toPositiveInteger(component.quantity ?? 1, 'Series component quantity'),
+            label: String(component.label ?? '').trim(),
+          };
+        })
+      : [];
+
     return {
       type,
       quantity,
@@ -395,6 +498,7 @@ function checkoutSale(db, rawPayload = {}) {
       image: String(item.image ?? ''),
       serieId: item.serieId ? String(item.serieId) : '',
       size: item.size ? String(item.size) : '',
+      components,
     };
   });
 
@@ -440,6 +544,9 @@ function checkoutSale(db, rawPayload = {}) {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
+    const resolvedSales = [];
+    const productDeltas = new Map();
+
     for (const item of normalizedItems) {
       if (item.type === 'product') {
         const product = loadProduct(db, item.id);
@@ -447,17 +554,63 @@ function checkoutSale(db, rawPayload = {}) {
           throw new Error(`Product not found: ${item.id}`);
         }
 
-        const stockQty = Math.trunc(toNumber(product.stock_qty, 0));
-        if (item.quantity > stockQty) {
-          throw new Error(`Not enough stock for ${product.name}. Available: ${stockQty}`);
+        resolvedSales.push({ type: 'product', item, product });
+        productDeltas.set(product.id, (productDeltas.get(product.id) ?? 0) + item.quantity);
+        continue;
+      }
+
+      if (item.type === 'serie') {
+        if (!item.serieId) {
+          throw new Error('Missing series id on cart item.');
         }
 
+        const loadedSerie = loadSeries(db, item.serieId);
+        if (!loadedSerie) {
+          throw new Error(`Series not found: ${item.serieId}`);
+        }
+
+        const baseComponents = item.components.length > 0 ? item.components : loadedSerie.components;
+        const normalizedComponents = baseComponents
+          .map((component) => ({
+            productId: String(component.productId ?? '').trim(),
+            quantity: Math.max(1, Math.trunc(toNumber(component.quantity, 0))),
+            label: String(component.label ?? '').trim(),
+          }))
+          .filter((component) => component.productId.length > 0);
+
+        if (normalizedComponents.length === 0) {
+          throw new Error(`Box ${loadedSerie.name} has no configured products.`);
+        }
+
+        for (const component of normalizedComponents) {
+          const product = loadProduct(db, component.productId);
+          if (!product) {
+            throw new Error(`Product not found for box ${loadedSerie.name}: ${component.productId}`);
+          }
+
+          productDeltas.set(product.id, (productDeltas.get(product.id) ?? 0) + component.quantity * item.quantity);
+        }
+
+        resolvedSales.push({ type: 'serie', item, serie: loadedSerie, components: normalizedComponents });
+      }
+    }
+
+    for (const [productId, required] of productDeltas.entries()) {
+      const product = loadProduct(db, productId);
+      if (!product) {
+        throw new Error(`Product not found: ${productId}`);
+      }
+
+      const stockQty = Math.trunc(toNumber(product.stock_qty, 0));
+      if (required > stockQty) {
+        throw new Error(`Not enough stock for ${product.name}. Available: ${stockQty}`);
+      }
+    }
+
+    for (const sale of resolvedSales) {
+      if (sale.type === 'product') {
+        const { item, product } = sale;
         const lineTotalCents = toCents(item.price * item.quantity);
-        db.prepare(`
-          UPDATE products
-          SET stock_qty = stock_qty - ?, updated_at = ?
-          WHERE id = ?
-        `).run(item.quantity, now, item.id);
 
         insertOrderItem.run(
           `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
@@ -471,109 +624,52 @@ function checkoutSale(db, rawPayload = {}) {
           lineTotalCents,
           product.cost_price_cents ?? null
         );
-
-        insertMovement.run(
-          `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
-          product.id,
-          'sale',
-          orderId,
-          -item.quantity,
-          `Sale ${receiptNumber}`,
-          now
-        );
         continue;
       }
 
-      if (item.type === 'serie-item' || item.type === 'serie') {
-        if (!item.serieId) {
-          throw new Error('Missing series id on cart item.');
-        }
+      const { item, serie } = sale;
+      const lineTotalCents = toCents(item.price * item.quantity);
+      const boxCostCents = Math.trunc(toNumber(serie.costPrice, 0) * 100);
 
-        const loadedSeries = loadSeries(db, item.serieId);
-        if (!loadedSeries) {
-          throw new Error(`Series not found: ${item.serieId}`);
-        }
+      insertOrderItem.run(
+        `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+        orderId,
+        null,
+        item.name || String(serie.name ?? ''),
+        null,
+        String(serie.boxBarcode ?? ''),
+        item.quantity,
+        toCents(item.price),
+        lineTotalCents,
+        boxCostCents
+      );
+    }
 
-        const { seriesRow, items: seriesItems } = loadedSeries;
-        const totalUnits = seriesItems.reduce((sum, row) => sum + Math.trunc(toNumber(row.quantity, 0)), 0);
-        const unitCostCents = totalUnits > 0 ? Math.round(toNumber(seriesRow.cost_price_cents, 0) / totalUnits) : null;
-        const boxCostCents = Math.trunc(toNumber(seriesRow.cost_price_cents, 0));
-        const productId = seriesRow.product_id ? String(seriesRow.product_id) : null;
-
-        if (item.type === 'serie') {
-          const boxQuantity = Math.trunc(toNumber(seriesRow.box_quantity, 0));
-          if (item.quantity > boxQuantity) {
-            throw new Error(`Not enough boxes for series: ${seriesRow.name}. Available: ${boxQuantity}`);
-          }
-
-          const info = db.prepare(`
-            UPDATE series
-            SET box_quantity = box_quantity - ?, updated_at = ?
-            WHERE id = ? AND box_quantity >= ?
-          `).run(item.quantity, now, seriesRow.id, item.quantity);
-
-          if (info.changes === 0) {
-            throw new Error(`Not enough boxes for series: ${seriesRow.name}. Available: ${boxQuantity}`);
-          }
-
-          const lineTotalCents = toCents(item.price * item.quantity);
-
-          insertOrderItem.run(
-            `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
-            orderId,
-            productId,
-            String(seriesRow.name ?? ''),
-            null,
-            String(seriesRow.box_barcode ?? ''),
-            item.quantity,
-            toCents(item.price),
-            lineTotalCents,
-            boxCostCents
-          );
-
-          continue;
-        }
-
-        const targetSize = item.size;
-        const targetRow = seriesItems.find((row) => String(row.size ?? '') === targetSize);
-        if (!targetRow) {
-          throw new Error(`Size not found in series ${seriesRow.name}: ${targetSize}`);
-        }
-
-        const remaining = Math.max(0, Math.trunc(toNumber(targetRow.quantity, 0)) - Math.max(0, Math.trunc(toNumber(targetRow.sold, 0))));
-        if (item.quantity > remaining) {
-          throw new Error(`Not enough stock for ${seriesRow.name} size ${targetSize}. Available: ${remaining}`);
-        }
-
-        const info = db.prepare(`
-          UPDATE series_items
-          SET sold = sold + ?, updated_at = ?
-          WHERE series_id = ? AND size = ? AND sold + ? <= quantity
-        `).run(item.quantity, now, seriesRow.id, targetSize, item.quantity);
-
-        if (info.changes === 0) {
-          throw new Error(`Failed to update series item ${seriesRow.name} size ${targetSize}.`);
-        }
-
-        db.prepare(`
-          UPDATE series
-          SET updated_at = ?
-          WHERE id = ?
-        `).run(now, seriesRow.id);
-
-        insertOrderItem.run(
-          `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
-          orderId,
-          productId,
-          `${item.name || String(seriesRow.name ?? '')} — Size ${targetSize}`,
-          null,
-          String(seriesRow.product_barcode ?? ''),
-          item.quantity,
-          toCents(item.price),
-          toCents(item.price * item.quantity),
-          unitCostCents
-        );
+    for (const [productId, required] of productDeltas.entries()) {
+      const product = loadProduct(db, productId);
+      if (!product) {
+        throw new Error(`Product not found: ${productId}`);
       }
+
+      const info = db.prepare(`
+        UPDATE products
+        SET stock_qty = stock_qty - ?, updated_at = ?
+        WHERE id = ? AND stock_qty >= ?
+      `).run(required, now, product.id, required);
+
+      if (info.changes === 0) {
+        throw new Error(`Not enough stock for ${product.name}. Available: ${Math.trunc(toNumber(product.stock_qty, 0))}`);
+      }
+
+      insertMovement.run(
+        `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+        product.id,
+        'sale',
+        orderId,
+        -required,
+        `Sale ${receiptNumber}`,
+        now
+      );
     }
 
     return {

@@ -1,15 +1,16 @@
 import { useState, useRef, useEffect } from 'react';
 import { Search, Plus, Minus, X, Printer, ScanBarcode, User, PackageOpen, Pencil, Trash2 } from 'lucide-react';
-import { productCatalog, getProducts, subscribeProducts, type Product } from './data/products';
-import { getSeries, findSerieByBoxBarcode, findSeriesByProductBarcode, subscribeSeries, getSerieRemainingCount, getSerieAvailableSizes, getSerieBoxQuantity, type Serie } from './data/series';
+import { getProducts, subscribeProducts, type Product } from './data/products';
+import { getSeries, findSerieByBoxBarcode, refreshSeries, subscribeSeries, getSerieBoxQuantity, type Serie, type SerieComponent } from './data/series';
 import { type Customer } from './data/customers';
 import { checkoutSale } from './data/sales';
 import { getErrorMessage } from './data/shared';
 import { CustomerPicker } from './CustomerPicker';
+import { BoxSaleModal } from './BoxSaleModal';
 import { ItemImage } from './ItemImagePlaceholder';
 
 type CartItem = (Product & { quantity: number; type: 'product' }) |
-  { type: 'serie'; id: string; serieId: string; category: string; name: string; image: string; price: number; quantity: number } |
+  { type: 'serie'; id: string; serieId: string; category: string; name: string; image: string; price: number; quantity: number; components: SerieComponent[] } |
   { type: 'serie-item'; id: string; serieId: string; serieName: string; size: string; category: string; name: string; image: string; price: number; quantity: number };
 
 const categories = ['All', 'Shirts', 'Pants', 'Accessories'];
@@ -37,9 +38,7 @@ export function POSView() {
   const barcodeRef = useRef<HTMLInputElement>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
-  // Serie choice dialog state
-  const [serieChoice, setSerieChoice] = useState<{ series: Serie[]; productBarcode: string } | null>(null);
-  const [sizePickSerie, setSizePickSerie] = useState<Serie | null>(null);
+  const [boxSaleSerie, setBoxSaleSerie] = useState<Serie | null>(null);
   const [checkoutError, setCheckoutError] = useState('');
   // Inline price editing state
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
@@ -49,7 +48,10 @@ export function POSView() {
 
   useEffect(() => {
     const unsubSeries = subscribeSeries(() => setSeries(getSeries()));
-    const unsubProducts = subscribeProducts(() => setProducts(getProducts()));
+    const unsubProducts = subscribeProducts(() => {
+      setProducts(getProducts());
+      void refreshSeries();
+    });
     return () => {
       unsubSeries();
       unsubProducts();
@@ -68,46 +70,32 @@ export function POSView() {
     });
   };
 
-  const addSerieToCart = (serie: Serie) => {
-    const boxQuantity = getSerieBoxQuantity(serie);
-    if (boxQuantity === 0) return false;
-
-    const existing = cart.find((item) => item.type === 'serie' && item.serieId === serie.id);
-    if (existing && existing.quantity >= boxQuantity) {
-      return false;
-    }
+  const addBoxToCart = (serie: Serie, quantity: number, components: SerieComponent[]) => {
+    const normalizedQuantity = Math.max(1, Math.trunc(quantity));
+    const normalizedComponents = components.map((component) => ({
+      productId: component.productId,
+      quantity: Math.max(1, Math.trunc(Number(component.quantity)) || 1),
+      label: component.label,
+    }));
+    const configKey = JSON.stringify(normalizedComponents.map((component) => [component.productId, component.quantity]));
+    const cartId = `serie-${serie.id}-${configKey}`;
 
     setCart((prev) => {
-      const current = prev.find((item) => item.type === 'serie' && item.serieId === serie.id);
-      if (current) {
-        if (current.quantity >= boxQuantity) return prev;
-        return prev.map((item) =>
-          item.type === 'serie' && item.serieId === serie.id ? { ...item, quantity: item.quantity + 1 } : item
-        );
+      const existing = prev.find((item) => item.type === 'serie' && item.id === cartId);
+      if (existing) {
+        return prev.map((item) => (item.type === 'serie' && item.id === cartId ? { ...item, quantity: item.quantity + normalizedQuantity } : item));
       }
 
       return [...prev, {
-        type: 'serie' as const, id: `serie-${serie.id}`, serieId: serie.id,
+        type: 'serie' as const,
+        id: cartId,
+        serieId: serie.id,
         category: serie.category,
-        name: `📦 ${serie.name}`, image: serie.image,
-        price: serie.sellingPrice, quantity: 1,
-      }];
-    });
-
-    return true;
-  };
-
-  const addSerieItemToCart = (serie: Serie, size: string) => {
-    const price = serie.unitPrice;
-    const cartId = `si-${serie.id}-${size}`;
-    setCart((prev) => {
-      const existing = prev.find((item) => item.type === 'serie-item' && item.id === cartId);
-      if (existing) return prev; // Can only sell each size once
-      return [...prev, {
-        type: 'serie-item' as const, id: cartId, serieId: serie.id,
-        serieName: serie.name, size, name: `${serie.name} — Size ${size}`,
-        category: serie.category,
-        image: serie.image, price, quantity: 1,
+        name: `📦 ${serie.name}`,
+        image: serie.image,
+        price: serie.sellingPrice,
+        quantity: normalizedQuantity,
+        components: normalizedComponents,
       }];
     });
   };
@@ -247,47 +235,18 @@ export function POSView() {
     e.preventDefault();
     const code = barcodeInput.trim();
     if (!code) return;
-    // 1. Check if it's a box barcode
+
     const serieByBox = findSerieByBoxBarcode(code);
     if (serieByBox) {
-      if (getSerieBoxQuantity(serieByBox) <= 0) {
-        setBarcodeError(`No boxes left for ${serieByBox.name}`);
-      } else {
-        const added = addSerieToCart(serieByBox);
-        setBarcodeError(added ? '' : `No boxes left for ${serieByBox.name}`);
-      }
+      setBoxSaleSerie(serieByBox);
+      setBarcodeError('');
       setBarcodeInput('');
       barcodeRef.current?.focus();
       return;
     }
 
-    // 2. Check if it's a product barcode that also matches series
-    const matchingSeries = findSeriesByProductBarcode(code);
     const foundProduct = products.find((p) => p.barcode === code || p.sku.toLowerCase() === code.toLowerCase());
 
-    if (matchingSeries.length > 0 && foundProduct) {
-      // Show choice dialog
-      setSerieChoice({ series: matchingSeries, productBarcode: code });
-      setBarcodeError('');
-      setBarcodeInput('');
-      barcodeRef.current?.focus();
-      return;
-    }
-
-    if (matchingSeries.length > 0) {
-      // No individual product, just series
-      if (matchingSeries.length === 1) {
-        setSizePickSerie(matchingSeries[0]);
-      } else {
-        setSerieChoice({ series: matchingSeries, productBarcode: code });
-      }
-      setBarcodeError('');
-      setBarcodeInput('');
-      barcodeRef.current?.focus();
-      return;
-    }
-
-    // 3. Regular product
     if (foundProduct) {
       addProductToCart(foundProduct);
       setBarcodeError('');
@@ -347,7 +306,7 @@ export function POSView() {
             <h3 className="text-sm text-muted-foreground mb-3 flex items-center gap-1.5"><PackageOpen className="w-4 h-4" /> Available Boxes</h3>
             <div className="grid grid-cols-3 gap-4">
               {series.filter(s => getSerieBoxQuantity(s) > 0).map(s => (
-                <button key={s.id} onClick={() => { addSerieToCart(s); }}
+                <button key={s.id} onClick={() => { setBoxSaleSerie(s); setBarcodeError(''); }}
                   className="bg-card border-2 border-primary/20 rounded-lg p-4 text-left hover:border-primary transition-colors relative">
                   <div className="absolute top-2 right-2 bg-primary text-primary-foreground text-xs px-2 py-0.5 rounded-full">
                     📦 {getSerieBoxQuantity(s)} box{getSerieBoxQuantity(s) > 1 ? 'es' : ''}
@@ -423,6 +382,14 @@ export function POSView() {
                   <ItemImage src={item.image} alt={item.name} category={item.category} className={`w-16 h-16 rounded-lg flex-shrink-0 border border-slate-200 ${item.type === 'serie' ? 'ring-2 ring-primary/30' : 'bg-slate-100'}`} iconClassName="w-6 h-6" />
                   <div className="flex-1 min-w-0">
                     <div className="mb-1 text-sm">{item.name}</div>
+                    {item.type === 'serie' && item.components.length > 0 && (
+                      <div className="mb-1 text-xs text-muted-foreground truncate">
+                        {item.components.map((component) => {
+                          const product = products.find((entry) => entry.id === component.productId);
+                          return `${product?.name || component.label || component.productId} ×${component.quantity}`;
+                        }).join(', ')}
+                      </div>
+                    )}
                     {editingPriceId === item.id ? (
                       <form onSubmit={(e) => { e.preventDefault(); confirmEditPrice(item.id); }} className="flex items-center gap-1.5">
                         <span className="text-sm text-muted-foreground">DZ</span>
@@ -503,56 +470,16 @@ export function POSView() {
         <CustomerPicker selectedCustomer={selectedCustomer} onSelect={setSelectedCustomer} onClose={() => setShowCustomerPicker(false)} />
       )}
 
-      {/* Serie Choice Dialog — product barcode matches both product and series */}
-      {serieChoice && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-sm p-6">
-            <h2 className="mb-2">This barcode matches a serie</h2>
-            <p className="text-sm text-muted-foreground mb-4">How would you like to sell this item?</p>
-            <div className="space-y-2">
-              <button onClick={() => {
-                const p = productCatalog.find(p => p.barcode === serieChoice.productBarcode || p.sku.toLowerCase() === serieChoice.productBarcode.toLowerCase());
-                if (p) addProductToCart(p);
-                setSerieChoice(null);
-              }} className="w-full p-3 border border-border rounded-lg hover:bg-muted transition-colors text-left">
-                <div className="font-medium text-sm">Sell as individual product</div>
-                <div className="text-xs text-muted-foreground">Uses the product's own price</div>
-              </button>
-              {serieChoice.series.map(s => (
-                <button key={s.id} onClick={() => { setSizePickSerie(s); setSerieChoice(null); }}
-                  className="w-full p-3 border-2 border-primary/20 rounded-lg hover:border-primary transition-colors text-left">
-                  <div className="font-medium text-sm">Sell from: {s.name}</div>
-                  <div className="text-xs text-muted-foreground">Pick a size — {getSerieRemainingCount(s)} items remaining</div>
-                </button>
-              ))}
-            </div>
-            <button onClick={() => setSerieChoice(null)} className="w-full mt-3 py-2 text-sm text-muted-foreground hover:text-foreground">Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {/* Size Pick Dialog */}
-      {sizePickSerie && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-sm p-6">
-            <h2 className="mb-1">Pick a size</h2>
-            <p className="text-sm text-muted-foreground mb-4">From: {sizePickSerie.name}</p>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {sizePickSerie.items.map((item, i) => {
-                const remaining = item.quantity - item.sold;
-                const isSoldOut = remaining === 0;
-                return (
-                  <button key={i} disabled={isSoldOut}
-                    onClick={() => { addSerieItemToCart(sizePickSerie, item.size); setSizePickSerie(null); }}
-                    className={`px-4 py-2.5 rounded-lg text-sm transition-colors ${
-                      isSoldOut ? 'bg-muted text-muted-foreground cursor-not-allowed line-through' : 'bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground border border-primary/30'
-                    }`}>{item.size} {item.quantity > 1 ? `(${remaining} left)` : ''}</button>
-                );
-              })}
-            </div>
-            <button onClick={() => setSizePickSerie(null)} className="w-full py-2 text-sm text-muted-foreground hover:text-foreground">Cancel</button>
-          </div>
-        </div>
+      {boxSaleSerie && (
+        <BoxSaleModal
+          serie={boxSaleSerie}
+          products={products}
+          onConfirm={({ quantity, components }) => {
+            addBoxToCart(boxSaleSerie, quantity, components);
+            setBoxSaleSerie(null);
+          }}
+          onClose={() => setBoxSaleSerie(null)}
+        />
       )}
 
       {/* Receipt Modal */}

@@ -1,12 +1,11 @@
 import { getDbApi, toCents } from './shared';
 import { getProducts, updateProduct, refreshProducts, type Product } from './products';
-import { getSeries, sellSerieItem, refreshSeries, getSerieBoxQuantity, adjustSerieBoxQuantity, type Serie } from './series';
+import { getSeries, refreshSeries, type Serie, type SerieComponent } from './series';
 import { refreshCustomers } from './customers';
 
 export type SaleCartItem =
   | { type: 'product'; id: string; name: string; image: string; price: number; quantity: number }
-  | { type: 'serie'; id: string; serieId: string; name: string; image: string; price: number; quantity: number }
-  | { type: 'serie-item'; id: string; serieId: string; serieName: string; size: string; name: string; image: string; price: number; quantity: number };
+  | { type: 'serie'; id: string; serieId: string; name: string; image: string; price: number; quantity: number; components: SerieComponent[] };
 
 export type SaleCheckoutContext = {
   sourceView: 'pos' | 'scanner';
@@ -40,12 +39,25 @@ function getSerieById(id: string): Serie | undefined {
   return getSeries().find((serie) => serie.id === id);
 }
 
+function normalizeBoxComponents(serie: Serie, components: SerieComponent[] | undefined) {
+  const source = Array.isArray(components) && components.length > 0 ? components : serie.components;
+  return source
+    .map((component) => ({
+      productId: String(component.productId ?? '').trim(),
+      quantity: Math.max(1, Math.trunc(Number(component.quantity ?? 1))),
+      label: String(component.label ?? '').trim(),
+    }))
+    .filter((component) => component.productId.length > 0);
+}
+
 async function applyLocalSale(items: SaleCartItem[]) {
-  const resolvedItems: Array<
-    | { type: 'product'; product: Product; quantity: number }
-    | { type: 'serie'; serie: Serie }
-    | { type: 'serie-item'; serie: Serie; size: string; quantity: number }
-  > = [];
+  const productDeltas = new Map<string, number>();
+  const productSnapshots = new Map<string, Product>();
+
+  const reserveProduct = (product: Product, quantity: number) => {
+    productSnapshots.set(product.id, product);
+    productDeltas.set(product.id, (productDeltas.get(product.id) ?? 0) + quantity);
+  };
 
   for (const item of items) {
     if (item.type === 'product') {
@@ -54,11 +66,7 @@ async function applyLocalSale(items: SaleCartItem[]) {
         throw new Error(`Product not found: ${item.id}`);
       }
 
-      if (item.quantity > product.stock) {
-        throw new Error(`Not enough stock for ${product.name}. Available: ${product.stock}`);
-      }
-
-      resolvedItems.push({ type: 'product', product, quantity: item.quantity });
+      reserveProduct(product, item.quantity);
       continue;
     }
 
@@ -67,46 +75,42 @@ async function applyLocalSale(items: SaleCartItem[]) {
       throw new Error(`Series not found: ${item.serieId}`);
     }
 
-    if (item.type === 'serie') {
-      const available = getSerieBoxQuantity(serie);
-      if (item.quantity > available) {
-        throw new Error(`Not enough boxes for series: ${serie.name}. Available: ${available}`);
+    const components = normalizeBoxComponents(serie, item.components);
+    if (components.length === 0) {
+      throw new Error(`Box ${serie.name} has no configured products.`);
+    }
+
+    for (const component of components) {
+      const product = getProductById(component.productId);
+      if (!product) {
+        throw new Error(`Product not found for box ${serie.name}: ${component.productId}`);
       }
 
-      resolvedItems.push({ type: 'serie', serie, quantity: item.quantity });
-      continue;
+      reserveProduct(product, component.quantity * item.quantity);
     }
-
-    const sizeItem = serie.items.find((entry) => entry.size === item.size);
-    if (!sizeItem) {
-      throw new Error(`Size not found in ${serie.name}: ${item.size}`);
-    }
-
-    const remaining = Math.max(0, sizeItem.quantity - sizeItem.sold);
-    if (item.quantity > remaining) {
-      throw new Error(`Not enough stock for ${serie.name} size ${item.size}. Available: ${remaining}`);
-    }
-
-    resolvedItems.push({ type: 'serie-item', serie, size: item.size, quantity: item.quantity });
   }
 
-  for (const resolved of resolvedItems) {
-    if (resolved.type === 'product') {
-      await updateProduct({
-        ...resolved.product,
-        stock: resolved.product.stock - resolved.quantity,
-      });
-      continue;
+  for (const [productId, required] of productDeltas.entries()) {
+    const product = productSnapshots.get(productId) ?? getProductById(productId);
+    if (!product) {
+      throw new Error(`Product not found: ${productId}`);
     }
 
-    if (resolved.type === 'serie') {
-      if (!adjustSerieBoxQuantity(resolved.serie.id, -resolved.quantity)) {
-        throw new Error(`No boxes left for series: ${resolved.serie.name}`);
-      }
-      continue;
+    if (required > product.stock) {
+      throw new Error(`Not enough stock for ${product.name}. Available: ${product.stock}`);
+    }
+  }
+
+  for (const [productId, required] of productDeltas.entries()) {
+    const product = productSnapshots.get(productId) ?? getProductById(productId);
+    if (!product) {
+      throw new Error(`Product not found: ${productId}`);
     }
 
-    sellSerieItem(resolved.serie.id, resolved.size, resolved.quantity);
+    await updateProduct({
+      ...product,
+      stock: product.stock - required,
+    });
   }
 }
 

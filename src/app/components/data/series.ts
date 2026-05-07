@@ -1,6 +1,13 @@
 import { getDbApi, toDateOnly } from './shared';
+import { getProducts, type Product } from './products';
 
-export type SerieItem = {
+export type SerieComponent = {
+  productId: string;
+  quantity: number;
+  label?: string;
+};
+
+export type SerieLegacyItem = {
   size: string;
   quantity: number;
   sold: number;
@@ -10,76 +17,35 @@ export type Serie = {
   id: string;
   name: string;
   boxBarcode: string;
-  productBarcode: string;
-  productId?: string;
   category: string;
   image: string;
   costPrice: number;
   sellingPrice: number;
-  unitPrice: number;
-  boxQuantity: number;
-  items: SerieItem[];
+  components: SerieComponent[];
+  legacyItems?: SerieLegacyItem[];
   supplierId?: string;
   createdAt: string;
 };
 
-const seedSeries: Serie[] = [
-  {
-    id: 'serie-1',
-    name: 'Nike Air Max Serie',
-    boxBarcode: 'BOX-NIKE-001',
-    productBarcode: 'NIKE-AM-001',
-    category: 'Shoes',
-    image: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400&h=400&fit=crop',
-    costPrice: 420,
-    sellingPrice: 720,
-    unitPrice: 120,
-    boxQuantity: 1,
-    items: [
-      { size: '39', quantity: 1, sold: 0 },
-      { size: '40', quantity: 1, sold: 0 },
-      { size: '41', quantity: 1, sold: 0 },
-      { size: '42', quantity: 1, sold: 0 },
-      { size: '43', quantity: 1, sold: 0 },
-      { size: '44', quantity: 1, sold: 0 },
-    ],
-    createdAt: '2026-04-01',
-  },
-  {
-    id: 'serie-2',
-    name: 'Adidas Stan Smith Serie',
-    boxBarcode: 'BOX-ADIDAS-001',
-    productBarcode: 'ADIDAS-SS-001',
-    category: 'Shoes',
-    image: 'https://images.unsplash.com/photo-1595950653106-6c9ebd614d3a?w=400&h=400&fit=crop',
-    costPrice: 360,
-    sellingPrice: 600,
-    unitPrice: 100,
-    boxQuantity: 1,
-    items: [
-      { size: '38', quantity: 1, sold: 0 },
-      { size: '39', quantity: 1, sold: 0 },
-      { size: '40', quantity: 1, sold: 1 },
-      { size: '41', quantity: 1, sold: 0 },
-      { size: '42', quantity: 1, sold: 0 },
-      { size: '43', quantity: 1, sold: 0 },
-    ],
-    createdAt: '2026-04-05',
-  },
-];
+const seedSeries: Serie[] = [];
 
 let _series: Serie[] = [...seedSeries];
 let _listeners: (() => void)[] = [];
 let _initPromise: Promise<void> | null = null;
 
-function cloneItems(items: SerieItem[]) {
-  return items.map((item) => ({ ...item }));
+function cloneComponents(components: SerieComponent[]) {
+  return components.map((component) => ({ ...component }));
+}
+
+function cloneLegacyItems(items?: SerieLegacyItem[]) {
+  return items ? items.map((item) => ({ ...item })) : undefined;
 }
 
 function cloneSerie(serie: Serie): Serie {
   return {
     ...serie,
-    items: cloneItems(serie.items),
+    components: cloneComponents(serie.components),
+    legacyItems: cloneLegacyItems(serie.legacyItems),
   };
 }
 
@@ -87,33 +53,76 @@ function notify() {
   _listeners.forEach((listener) => listener());
 }
 
-function normalizeSerieRow(row: Record<string, unknown>): Serie {
-  const costPrice = Number(row.costPrice ?? 0);
-  const sellingPrice = Number(row.sellingPrice ?? 0);
-  const unitPrice = Number(row.unitPrice ?? 0);
-  const boxQuantity = Number(row.boxQuantity ?? row.box_quantity ?? 1);
+function parsePositiveQuantity(value: unknown) {
+  const quantity = Math.trunc(Number(value ?? 0));
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+}
+
+function normalizeSerieRow(row: Record<string, unknown>, products: Product[]): Serie {
+  const productLookup = new Map<string, Product>();
+
+  for (const product of products) {
+    productLookup.set(product.id, product);
+    productLookup.set(product.barcode, product);
+    productLookup.set(product.sku.toLowerCase(), product);
+    productLookup.set(product.name.toLowerCase(), product);
+  }
+
+  const fallbackProductId = String(row.productId ?? row.product_id ?? '').trim();
+  const rawComponents = Array.isArray(row.components) ? row.components : Array.isArray(row.items) ? row.items : [];
+  const rawLegacyItems = Array.isArray(row.legacyItems) ? row.legacyItems : [];
+  const components: SerieComponent[] = [];
+  const legacyItems: SerieLegacyItem[] = [];
+
+  for (const rawItem of rawComponents) {
+    const item = rawItem as Record<string, unknown>;
+    const explicitProductId = String(item.productId ?? item.product_id ?? '').trim();
+    const label = String(item.size ?? item.label ?? '').trim();
+    const quantity = parsePositiveQuantity(item.quantity);
+    const resolvedProduct =
+      productLookup.get(explicitProductId) ??
+      productLookup.get(label) ??
+      productLookup.get(label.toLowerCase()) ??
+      (fallbackProductId ? productLookup.get(fallbackProductId) : undefined);
+    const productId = explicitProductId || resolvedProduct?.id || fallbackProductId || '';
+
+    if (productId) {
+      components.push({
+        productId,
+        quantity,
+        label: label || resolvedProduct?.name || resolvedProduct?.sku || undefined,
+      });
+      continue;
+    }
+
+    legacyItems.push({
+      size: label,
+      quantity,
+      sold: Math.max(0, Math.trunc(Number(item.sold ?? 0))),
+    });
+  }
+
+  for (const rawItem of rawLegacyItems) {
+    const item = rawItem as Record<string, unknown>;
+    legacyItems.push({
+      size: String(item.size ?? ''),
+      quantity: parsePositiveQuantity(item.quantity),
+      sold: Math.max(0, Math.trunc(Number(item.sold ?? 0))),
+    });
+  }
 
   return {
     id: String(row.id),
     name: String(row.name ?? ''),
-    boxBarcode: String(row.boxBarcode ?? ''),
-    productBarcode: String(row.productBarcode ?? ''),
-    productId: row.productId ? String(row.productId) : undefined,
+    boxBarcode: String(row.boxBarcode ?? row.box_barcode ?? ''),
     category: String(row.category ?? ''),
-    image: String(row.image ?? ''),
-    costPrice: Number.isFinite(costPrice) ? costPrice : 0,
-    sellingPrice: Number.isFinite(sellingPrice) ? sellingPrice : 0,
-    unitPrice: Number.isFinite(unitPrice) ? unitPrice : 0,
-    boxQuantity: Number.isFinite(boxQuantity) ? Math.max(0, Math.trunc(boxQuantity)) : 1,
-    items: Array.isArray(row.items)
-      ? row.items.map((item) => ({
-          size: String((item as Record<string, unknown>).size ?? ''),
-          quantity: Number((item as Record<string, unknown>).quantity ?? 0),
-          sold: Number((item as Record<string, unknown>).sold ?? 0),
-        }))
-      : [],
-    supplierId: row.supplierId ? String(row.supplierId) : undefined,
-    createdAt: toDateOnly(row.createdAt),
+    image: String(row.image ?? row.image_url ?? ''),
+    costPrice: Number.isFinite(Number(row.costPrice)) ? Number(row.costPrice) : Number(row.cost_price_cents ?? 0) / 100,
+    sellingPrice: Number.isFinite(Number(row.sellingPrice)) ? Number(row.sellingPrice) : Number(row.selling_price_cents ?? 0) / 100,
+    components,
+    legacyItems: legacyItems.length > 0 ? legacyItems : undefined,
+    supplierId: row.supplierId ? String(row.supplierId) : row.supplier_id ? String(row.supplier_id) : undefined,
+    createdAt: toDateOnly(row.createdAt ?? row.created_at),
   };
 }
 
@@ -121,16 +130,12 @@ function toCreatePayload(serie: Omit<Serie, 'id' | 'createdAt'>) {
   return {
     name: serie.name,
     boxBarcode: serie.boxBarcode,
-    productBarcode: serie.productBarcode,
-    productId: serie.productId || undefined,
     category: serie.category,
     image: serie.image || '',
     costPrice: serie.costPrice,
     sellingPrice: serie.sellingPrice,
-    unitPrice: serie.unitPrice,
-    boxQuantity: serie.boxQuantity,
     supplierId: serie.supplierId || undefined,
-    items: serie.items.map((item) => ({ ...item })),
+    components: serie.components.map((component) => ({ ...component })),
   };
 }
 
@@ -155,7 +160,7 @@ async function loadSeriesFromDb() {
   }
 
   const rows = await db.series.list({ orderBy: 'name' });
-  _series = rows.map((row) => normalizeSerieRow(row as Record<string, unknown>));
+  _series = rows.map((row) => normalizeSerieRow(row as Record<string, unknown>, getProducts()));
   notify();
 }
 
@@ -197,31 +202,50 @@ export function findSerieByBoxBarcode(barcode: string): Serie | undefined {
   return serie ? cloneSerie(serie) : undefined;
 }
 
+function getProductStock(productId: string, products: Product[]) {
+  const product = products.find((item) => item.id === productId);
+  return Math.max(0, Math.trunc(product?.stock ?? 0));
+}
+
 export function getSerieBoxQuantity(serie: Serie): number {
-  return Math.max(0, Math.trunc(serie.boxQuantity));
-}
+  if (!serie.components.length) {
+    return 0;
+  }
 
-export function findSeriesByProductBarcode(barcode: string): Serie[] {
-  return _series
-    .filter((serie) => serie.productBarcode === barcode && getSerieRemainingCount(serie) > 0)
-    .map((serie) => cloneSerie(serie));
-}
+  const products = getProducts();
+  let available = Number.POSITIVE_INFINITY;
 
-export function getSerieRemainingCount(serie: Serie): number {
-  return serie.items.reduce((sum, item) => sum + Math.max(0, item.quantity - item.sold), 0);
+  for (const component of serie.components) {
+    const quantity = Math.max(1, Math.trunc(component.quantity));
+    const stock = getProductStock(component.productId, products);
+    const possibleBoxes = Math.floor(stock / quantity);
+    available = Math.min(available, possibleBoxes);
+  }
+
+  return Number.isFinite(available) ? Math.max(0, available) : 0;
 }
 
 export function getSerieTotalCount(serie: Serie): number {
-  return serie.items.reduce((sum, item) => sum + item.quantity, 0);
+  return serie.components.reduce((sum, component) => sum + Math.max(1, Math.trunc(component.quantity)), 0);
 }
 
 export function getSerieAvailableSizes(serie: Serie): string[] {
-  return serie.items.filter((item) => item.quantity - item.sold > 0).map((item) => item.size);
+  return serie.components.map((component) => component.label || component.productId);
 }
 
-export function getSizeRemainingCount(serie: Serie, size: string): number {
-  const item = serie.items.find((entry) => entry.size === size);
-  return item ? Math.max(0, item.quantity - item.sold) : 0;
+export function getSerieRemainingCount(serie: Serie): number {
+  return getSerieBoxQuantity(serie);
+}
+
+export function getSizeRemainingCount(serie: Serie, componentId: string): number {
+  const component = serie.components.find((item) => item.productId === componentId || item.label === componentId);
+  if (!component) {
+    return 0;
+  }
+
+  const products = getProducts();
+  const stock = getProductStock(component.productId, products);
+  return Math.max(0, stock - Math.max(1, Math.trunc(component.quantity)));
 }
 
 export async function addSerie(serie: Omit<Serie, 'id' | 'createdAt'>) {
@@ -231,7 +255,7 @@ export async function addSerie(serie: Omit<Serie, 'id' | 'createdAt'>) {
   if (!db) {
     const newSerie: Serie = {
       ...serie,
-      items: cloneItems(serie.items),
+      components: cloneComponents(serie.components),
       id: `serie-${Date.now()}`,
       createdAt: new Date().toISOString().split('T')[0],
     };
@@ -245,7 +269,7 @@ export async function addSerie(serie: Omit<Serie, 'id' | 'createdAt'>) {
     throw new Error('Failed to create serie');
   }
 
-  const created = normalizeSerieRow(row as Record<string, unknown>);
+  const created = normalizeSerieRow(row as Record<string, unknown>, getProducts());
   _series = [..._series, created];
   notify();
   return cloneSerie(created);
@@ -266,7 +290,7 @@ export async function updateSerie(updated: Serie) {
     throw new Error('Failed to update serie');
   }
 
-  const saved = normalizeSerieRow(row as Record<string, unknown>);
+  const saved = normalizeSerieRow(row as Record<string, unknown>, getProducts());
   _series = _series.map((serie) => (serie.id === saved.id ? saved : serie));
   notify();
   return cloneSerie(saved);
@@ -284,36 +308,30 @@ export async function deleteSerie(id: string) {
   notify();
 }
 
-export function adjustSerieBoxQuantity(serieId: string, delta: number): boolean {
-  const serie = _series.find((item) => item.id === serieId);
-  if (!serie) {
-    return false;
-  }
-
-  const nextQuantity = serie.boxQuantity + Math.trunc(delta);
-  if (nextQuantity < 0) {
-    return false;
-  }
-
-  serie.boxQuantity = nextQuantity;
-  notify();
-  return true;
+export function adjustSerieBoxQuantity(_serieId: string, _delta: number): boolean {
+  return false;
 }
 
-export function sellSerieItem(serieId: string, size: string, quantity = 1): boolean {
-  const serie = _series.find((item) => item.id === serieId);
-  if (!serie) {
-    return false;
+export function sellSerieItem(_serieId: string, _size: string, _quantity = 1): boolean {
+  return false;
+}
+
+export function findSeriesByProductBarcode(barcode: string): Serie[] {
+  const products = getProducts();
+  const normalized = barcode.toLowerCase();
+  const matchingProductIds = new Set(
+    products
+      .filter((product) => product.barcode === barcode || product.sku.toLowerCase() === normalized)
+      .map((product) => product.id)
+  );
+
+  if (matchingProductIds.size === 0) {
+    return [];
   }
 
-  const item = serie.items.find((entry) => entry.size === size && entry.quantity - entry.sold > 0);
-  if (!item) {
-    return false;
-  }
-
-  item.sold = Math.min(item.quantity, item.sold + Math.max(1, Math.trunc(quantity)));
-  notify();
-  return true;
+  return _series
+    .filter((serie) => serie.components.some((component) => matchingProductIds.has(component.productId)))
+    .map((serie) => cloneSerie(serie));
 }
 
 export function subscribeSeries(listener: () => void) {
