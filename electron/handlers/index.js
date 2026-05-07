@@ -1,7 +1,10 @@
 import { ipcMain } from 'electron';
 import { getDatabasePath } from '../db/index.js';
 import { registerCrudHandlers, TABLE_NAMES } from './crud.js';
-import { checkoutSale, listSeries, getSeriesById, saveSeries, deleteSeries } from '../services/index.js';
+import { 
+  checkoutSale, listSeries, getSeriesById, saveSeries, deleteSeries,
+  updateSaleOrderItem, deleteSaleOrderItem, updatePurchaseLine, deletePurchase 
+} from '../services/index.js';
 
 export function registerHandlers({ db }) {
   ipcMain.handle('app:ping', () => {
@@ -47,6 +50,22 @@ export function registerHandlers({ db }) {
 
   ipcMain.handle('sales:checkout', (_event, payload = {}) => {
     return checkoutSale(db, payload);
+  });
+  
+  ipcMain.handle('history:update-sale-item', (_event, payload = {}) => {
+    return updateSaleOrderItem(db, payload);
+  });
+
+  ipcMain.handle('history:delete-sale-item', (_event, itemId) => {
+    return deleteSaleOrderItem(db, itemId);
+  });
+
+  ipcMain.handle('history:update-purchase', (_event, payload = {}) => {
+    return updatePurchaseLine(db, payload);
+  });
+
+  ipcMain.handle('history:delete-purchase', (_event, purchaseId) => {
+    return deletePurchase(db, purchaseId);
   });
 
   registerCrudHandlers({ db });

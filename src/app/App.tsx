@@ -7,6 +7,7 @@ import { SeriesView } from './components/SeriesView';
 import { CustomersView } from './components/CustomersView';
 import { SuppliersView } from './components/SuppliersView';
 import { ReportsView } from './components/ReportsView';
+import { HistoryView } from './components/HistoryView';
 import { SettingsView } from './components/SettingsView';
 
 export default function App() {
@@ -28,6 +29,8 @@ export default function App() {
         return <SuppliersView />;
       case 'reports':
         return <ReportsView />;
+      case 'history':
+        return <HistoryView />;
       case 'settings':
         return <SettingsView />;
       default:

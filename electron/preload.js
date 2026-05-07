@@ -37,6 +37,13 @@ const salesApi = {
   checkout: (payload = {}) => ipcRenderer.invoke('sales:checkout', payload),
 };
 
+const historyApi = {
+  updateSaleItem: (payload = {}) => ipcRenderer.invoke('history:update-sale-item', payload),
+  deleteSaleItem: (itemId) => ipcRenderer.invoke('history:delete-sale-item', itemId),
+  updatePurchase: (payload = {}) => ipcRenderer.invoke('history:update-purchase', payload),
+  deletePurchase: (purchaseId) => ipcRenderer.invoke('history:delete-purchase', purchaseId),
+};
+
 for (const tableName of tableNames) {
   dbCrudApi[tableName] = {
     list: (options = {}) => ipcRenderer.invoke(`db:${tableName}:list`, options),
@@ -56,6 +63,7 @@ const electronAPI = {
     ...dbCrudApi,
     series: seriesApi,
     sales: salesApi,
+    history: historyApi,
   },
 };
 

@@ -689,10 +689,278 @@ function checkoutSale(db, rawPayload = {}) {
   return transaction();
 }
 
+function updateSaleOrderItem(db, payload) {
+  const { itemId, quantity, unitPriceCents, unitCostCents, productId, productNameSnapshot, notes } = normalizeObject(payload, 'payload');
+  const now = nowIso();
+
+  const transaction = db.transaction(() => {
+    const item = db.prepare('SELECT * FROM sales_order_items WHERE id = ?').get(itemId);
+    if (!item) throw new Error('Sale item not found.');
+
+    const order = db.prepare('SELECT * FROM sales_orders WHERE id = ?').get(item.sales_order_id);
+    if (!order) throw new Error('Sales order not found.');
+
+    // 1. Stock adjustment
+    if (quantity !== undefined || productId !== undefined) {
+      const oldQty = item.quantity;
+      const newQty = quantity !== undefined ? toPositiveInteger(quantity, 'Quantity') : oldQty;
+      const oldProductId = item.product_id;
+      const newProductId = productId !== undefined ? textOrNull(productId) : oldProductId;
+
+      if (oldProductId !== newProductId) {
+        // Reverse old product stock
+        if (oldProductId) {
+          db.prepare('UPDATE products SET stock_qty = stock_qty + ?, updated_at = ? WHERE id = ?').run(oldQty, now, oldProductId);
+          db.prepare('INSERT INTO inventory_movements (id, product_id, source_type, source_id, quantity_delta, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+            `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+            oldProductId, 'manual_adjustment', order.id, oldQty, `Correction: product changed from item ${itemId} (Sale ${order.receipt_number})`, now
+          );
+        }
+        // Apply new product stock
+        if (newProductId) {
+          const product = db.prepare('SELECT stock_qty, name FROM products WHERE id = ?').get(newProductId);
+          if (!product) throw new Error(`Product not found: ${newProductId}`);
+          if (product.stock_qty < newQty) throw new Error(`Not enough stock for ${product.name}. Available: ${product.stock_qty}`);
+          
+          db.prepare('UPDATE products SET stock_qty = stock_qty - ?, updated_at = ? WHERE id = ?').run(newQty, now, newProductId);
+          db.prepare('INSERT INTO inventory_movements (id, product_id, source_type, source_id, quantity_delta, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+            `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+            newProductId, 'sale', order.id, -newQty, `Sale item update: ${order.receipt_number}`, now
+          );
+        }
+      } else if (oldQty !== newQty && oldProductId) {
+        // Quantity changed for same product
+        const delta = newQty - oldQty;
+        const product = db.prepare('SELECT stock_qty, name FROM products WHERE id = ?').get(oldProductId);
+        
+        if (delta > 0 && product.stock_qty < delta) {
+          throw new Error(`Not enough stock for ${product.name}. Available: ${product.stock_qty}`);
+        }
+
+        db.prepare('UPDATE products SET stock_qty = stock_qty - ?, updated_at = ? WHERE id = ?').run(delta, now, oldProductId);
+        db.prepare('INSERT INTO inventory_movements (id, product_id, source_type, source_id, quantity_delta, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+          `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+          oldProductId, 'manual_adjustment', order.id, -delta, `Correction: quantity changed for item ${itemId} (Sale ${order.receipt_number})`, now
+        );
+      }
+    }
+
+    // 2. Update item row
+    const finalQty = quantity !== undefined ? toPositiveInteger(quantity, 'Quantity') : item.quantity;
+    const finalUnitPrice = unitPriceCents !== undefined ? toNonNegativeInteger(unitPriceCents, 'Unit Price') : item.unit_price_cents;
+    const finalUnitCost = unitCostCents !== undefined ? toNonNegativeInteger(unitCostCents, 'Unit Cost') : item.unit_cost_cents;
+    const finalLineTotal = finalQty * finalUnitPrice;
+
+    db.prepare(`
+      UPDATE sales_order_items
+      SET quantity = ?,
+          unit_price_cents = ?,
+          line_total_cents = ?,
+          unit_cost_cents = ?,
+          product_id = ?,
+          product_name_snapshot = COALESCE(?, product_name_snapshot)
+      WHERE id = ?
+    `).run(
+      finalQty,
+      finalUnitPrice,
+      finalLineTotal,
+      finalUnitCost,
+      productId !== undefined ? textOrNull(productId) : item.product_id,
+      productNameSnapshot,
+      itemId
+    );
+
+    // 3. Recalculate order totals
+    const items = db.prepare('SELECT line_total_cents FROM sales_order_items WHERE sales_order_id = ?').all(order.id);
+    const subtotal = items.reduce((sum, i) => sum + i.line_total_cents, 0);
+    const total = Math.max(0, subtotal - order.discount_cents + order.tax_cents);
+
+    db.prepare('UPDATE sales_orders SET subtotal_cents = ?, total_cents = ? WHERE id = ?').run(subtotal, total, order.id);
+
+    return { id: itemId, orderId: order.id };
+  });
+
+  return transaction();
+}
+
+function deleteSaleOrderItem(db, itemId) {
+  const now = nowIso();
+
+  const transaction = db.transaction(() => {
+    const item = db.prepare('SELECT * FROM sales_order_items WHERE id = ?').get(itemId);
+    if (!item) return { success: false };
+
+    const orderId = item.sales_order_id;
+    const order = db.prepare('SELECT receipt_number, discount_cents, tax_cents FROM sales_orders WHERE id = ?').get(orderId);
+
+    // 1. Stock reversal
+    if (item.product_id) {
+      db.prepare('UPDATE products SET stock_qty = stock_qty + ?, updated_at = ? WHERE id = ?').run(item.quantity, now, item.product_id);
+      db.prepare('INSERT INTO inventory_movements (id, product_id, source_type, source_id, quantity_delta, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+        `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+        item.product_id, 'manual_adjustment', orderId, item.quantity, `Correction: item deleted ${itemId} (Sale ${order.receipt_number})`, now
+      );
+    } else if (item.product_barcode_snapshot) {
+      // Try to reverse box components
+      const serie = db.prepare('SELECT id FROM series WHERE box_barcode = ?').get(item.product_barcode_snapshot);
+      if (serie) {
+        const components = db.prepare('SELECT product_id, quantity FROM series_items WHERE series_id = ?').all(serie.id);
+        for (const comp of components) {
+          if (comp.product_id) {
+            const totalReverse = comp.quantity * item.quantity;
+            db.prepare('UPDATE products SET stock_qty = stock_qty + ?, updated_at = ? WHERE id = ?').run(totalReverse, now, comp.product_id);
+            db.prepare('INSERT INTO inventory_movements (id, product_id, source_type, source_id, quantity_delta, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+              `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+              comp.product_id, 'manual_adjustment', orderId, totalReverse, `Correction: box item deleted ${itemId} (Sale ${order.receipt_number})`, now
+            );
+          }
+        }
+      }
+    }
+
+    // 2. Delete item
+    db.prepare('DELETE FROM sales_order_items WHERE id = ?').run(itemId);
+
+    // 3. Cleanup or update order
+    const remainingCount = db.prepare('SELECT COUNT(*) as count FROM sales_order_items WHERE sales_order_id = ?').get(orderId).count;
+    if (remainingCount === 0) {
+      db.prepare('DELETE FROM sales_orders WHERE id = ?').run(orderId);
+      return { deletedOrder: true };
+    }
+
+    const remainingItems = db.prepare('SELECT line_total_cents FROM sales_order_items WHERE sales_order_id = ?').all(orderId);
+    const subtotal = remainingItems.reduce((sum, i) => sum + i.line_total_cents, 0);
+    const total = Math.max(0, subtotal - order.discount_cents + order.tax_cents);
+    db.prepare('UPDATE sales_orders SET subtotal_cents = ?, total_cents = ? WHERE id = ?').run(subtotal, total, orderId);
+
+    return { deletedOrder: false };
+  });
+
+  return transaction();
+}
+
+function updatePurchaseLine(db, payload) {
+  const { purchaseId, quantity, unitCostCents, productId, productNameSnapshot, notes, date } = normalizeObject(payload, 'payload');
+  const now = nowIso();
+
+  const transaction = db.transaction(() => {
+    const purchase = db.prepare('SELECT * FROM supplier_purchases WHERE id = ?').get(purchaseId);
+    if (!purchase) throw new Error('Purchase record not found.');
+
+    // 1. Stock adjustment
+    if (quantity !== undefined || productId !== undefined) {
+      const oldQty = purchase.quantity;
+      const newQty = quantity !== undefined ? toPositiveInteger(quantity, 'Quantity') : oldQty;
+      const oldProductId = purchase.product_id;
+      const newProductId = productId !== undefined ? textOrNull(productId) : oldProductId;
+
+      if (oldProductId !== newProductId) {
+        // Reverse old product (decrease stock)
+        if (oldProductId) {
+          const product = db.prepare('SELECT stock_qty, name FROM products WHERE id = ?').get(oldProductId);
+          if (product.stock_qty < oldQty) throw new Error(`Cannot change product: ${product.name} stock would become negative.`);
+          db.prepare('UPDATE products SET stock_qty = stock_qty - ?, updated_at = ? WHERE id = ?').run(oldQty, now, oldProductId);
+          db.prepare('INSERT INTO inventory_movements (id, product_id, source_type, source_id, quantity_delta, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+            `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+            oldProductId, 'manual_adjustment', purchaseId, -oldQty, `Correction: purchase product changed for ${purchaseId}`, now
+          );
+        }
+        // Apply new product (increase stock)
+        if (newProductId) {
+          db.prepare('UPDATE products SET stock_qty = stock_qty + ?, updated_at = ? WHERE id = ?').run(newQty, now, newProductId);
+          db.prepare('INSERT INTO inventory_movements (id, product_id, source_type, source_id, quantity_delta, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+            `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+            newProductId, 'purchase', purchaseId, newQty, `Purchase updated: ${purchaseId}`, now
+          );
+        }
+      } else if (oldQty !== newQty && oldProductId) {
+        const delta = newQty - oldQty;
+        const product = db.prepare('SELECT stock_qty, name FROM products WHERE id = ?').get(oldProductId);
+        
+        if (delta < 0 && product.stock_qty < Math.abs(delta)) {
+          throw new Error(`Cannot decrease quantity: ${product.name} stock would become negative.`);
+        }
+
+        db.prepare('UPDATE products SET stock_qty = stock_qty + ?, updated_at = ? WHERE id = ?').run(delta, now, oldProductId);
+        db.prepare('INSERT INTO inventory_movements (id, product_id, source_type, source_id, quantity_delta, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+          `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+          oldProductId, 'manual_adjustment', purchaseId, delta, `Correction: purchase quantity changed for ${purchaseId}`, now
+        );
+      }
+    }
+
+    // 2. Update record
+    const finalQty = quantity !== undefined ? toPositiveInteger(quantity, 'Quantity') : purchase.quantity;
+    const finalUnitCost = unitCostCents !== undefined ? toNonNegativeInteger(unitCostCents, 'Unit Cost') : purchase.unit_cost_cents;
+    const finalTotalCost = finalQty * finalUnitCost;
+
+    db.prepare(`
+      UPDATE supplier_purchases
+      SET quantity = ?,
+          unit_cost_cents = ?,
+          total_cost_cents = ?,
+          product_id = ?,
+          product_name_snapshot = COALESCE(?, product_name_snapshot),
+          notes = COALESCE(?, notes),
+          purchase_date = COALESCE(?, purchase_date),
+          updated_at = ?
+      WHERE id = ?
+    `).run(
+      finalQty,
+      finalUnitCost,
+      finalTotalCost,
+      productId !== undefined ? textOrNull(productId) : purchase.product_id,
+      productNameSnapshot,
+      notes,
+      date ? toIsoString(date) : purchase.purchase_date,
+      now,
+      purchaseId
+    );
+
+    return { id: purchaseId };
+  });
+
+  return transaction();
+}
+
+function deletePurchase(db, purchaseId) {
+  const now = nowIso();
+
+  const transaction = db.transaction(() => {
+    const purchase = db.prepare('SELECT * FROM supplier_purchases WHERE id = ?').get(purchaseId);
+    if (!purchase) return { success: false };
+
+    // 1. Stock reversal (decrease)
+    if (purchase.product_id) {
+      const product = db.prepare('SELECT stock_qty, name FROM products WHERE id = ?').get(purchase.product_id);
+      if (product.stock_qty < purchase.quantity) {
+        throw new Error(`Cannot delete purchase: ${product.name} stock would become negative.`);
+      }
+
+      db.prepare('UPDATE products SET stock_qty = stock_qty - ?, updated_at = ? WHERE id = ?').run(purchase.quantity, now, purchase.product_id);
+      db.prepare('INSERT INTO inventory_movements (id, product_id, source_type, source_id, quantity_delta, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+        `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+        purchase.product_id, 'manual_adjustment', purchaseId, -purchase.quantity, `Correction: purchase deleted ${purchaseId}`, now
+      );
+    }
+
+    // 2. Delete
+    db.prepare('DELETE FROM supplier_purchases WHERE id = ?').run(purchaseId);
+
+    return { success: true };
+  });
+
+  return transaction();
+}
+
 export {
   checkoutSale,
+  deletePurchase,
+  deleteSaleOrderItem,
   deleteSeries,
   getSeriesById,
   listSeries,
   persistSeries as saveSeries,
+  updatePurchaseLine,
+  updateSaleOrderItem,
 };

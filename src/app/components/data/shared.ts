@@ -44,3 +44,7 @@ export function isUniqueConstraintError(error: unknown, table: string, column?: 
   const target = column ? `${table}.${column}` : `${table}.`;
   return message.includes('UNIQUE constraint failed') && message.includes(target);
 }
+
+export function formatCurrency(amount: number): string {
+  return `${amount.toFixed(2)} DZ`;
+}
