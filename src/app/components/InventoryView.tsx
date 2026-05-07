@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Plus, MoreVertical, ChevronDown, X, Pencil, Trash2, Upload, ImageIcon } from 'lucide-react';
+import { Search, Plus, MoreVertical, ChevronDown, X, Pencil, Trash2, ScanBarcode } from 'lucide-react';
 import { getProducts, addProduct, updateProduct, deleteProduct, subscribeProducts, type Product } from './data/products';
+import { getSuppliers, subscribeSuppliers } from './data/suppliers';
+import { getErrorMessage, isUniqueConstraintError } from './data/shared';
+import { BarcodeGeneratorModal, BarcodeDisplay, generateBarcodeNumber } from './BarcodeGenerator';
+import { ItemImage, ItemImagePlaceholder } from './ItemImagePlaceholder';
 
 const categories = ['All Categories', 'Shirts', 'Pants', 'Accessories'];
 const productCategories = ['Shirts', 'Pants', 'Accessories'];
@@ -15,10 +19,91 @@ const emptyForm = {
   sku: '',
   variants: '',
   stock: '',
+  supplierId: '',
 };
+
+function formatDz(amount: number) {
+  return `${amount.toFixed(2)} DZ`;
+}
+
+function SupplierSelect({ suppliers, value, onChange }: { suppliers: any[], value: string, onChange: (val: string) => void }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const sortedSuppliers = [...suppliers].sort((a, b) => a.name.localeCompare(b.name));
+  const filtered = sortedSuppliers.filter(s => 
+    s.name.toLowerCase().includes(search.toLowerCase()) || 
+    (s.company && s.company.toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const selectedSupplier = suppliers.find(s => s.id === value);
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <div 
+        className="w-full px-3 py-2.5 bg-input-background border border-border rounded-lg text-sm flex items-center justify-between cursor-pointer"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <span className={selectedSupplier ? 'text-foreground line-clamp-1' : 'text-muted-foreground'}>
+          {selectedSupplier ? `${selectedSupplier.name} ${selectedSupplier.company ? `(${selectedSupplier.company})` : ''}` : 'Select a Supplier...'}
+        </span>
+        <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+      </div>
+      
+      {isOpen && (
+        <div className="absolute z-50 w-full mt-1 bg-card border border-border rounded-lg shadow-lg flex flex-col">
+          <div className="p-2 border-b border-border relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 bg-input-background border border-border rounded-md text-sm outline-none focus:border-primary"
+              autoFocus
+            />
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            <div 
+              className="px-3 py-2 text-sm cursor-pointer hover:bg-muted text-muted-foreground"
+              onClick={() => { onChange(''); setIsOpen(false); setSearch(''); }}
+            >
+              No Supplier
+            </div>
+            {filtered.length === 0 ? (
+              <div className="px-3 py-3 text-sm text-muted-foreground text-center">No suppliers found</div>
+            ) : (
+              filtered.map(s => (
+                <div
+                  key={s.id}
+                  className={`px-3 py-2 text-sm cursor-pointer hover:bg-muted ${value === s.id ? 'bg-primary/10 text-primary font-medium' : ''}`}
+                  onClick={() => { onChange(s.id); setIsOpen(false); setSearch(''); }}
+                >
+                  <div className="truncate">{s.name} <span className="text-muted-foreground">{s.company ? `(${s.company})` : ''}</span></div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function InventoryView() {
   const [products, setProducts] = useState(getProducts);
+  const [suppliers, setSuppliers] = useState(getSuppliers);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All Categories');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -27,9 +112,17 @@ export function InventoryView() {
   const [form, setForm] = useState(emptyForm);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [showBarcodeGenerator, setShowBarcodeGenerator] = useState(false);
+  const [barcodeForProduct, setBarcodeForProduct] = useState<Product | null>(null);
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
-    return subscribeProducts(() => setProducts(getProducts()));
+    const unsubProducts = subscribeProducts(() => setProducts(getProducts()));
+    const unsubSuppliers = subscribeSuppliers(() => setSuppliers(getSuppliers()));
+    return () => {
+      unsubProducts();
+      unsubSuppliers();
+    };
   }, []);
 
   const filteredInventory = products.filter((item) => {
@@ -43,6 +136,7 @@ export function InventoryView() {
   const openAdd = () => {
     setForm(emptyForm);
     setFormErrors({});
+    setSaveError('');
     setEditingProduct(null);
     setShowAddModal(true);
   };
@@ -58,8 +152,10 @@ export function InventoryView() {
       sku: product.sku,
       variants: product.variants,
       stock: product.stock.toString(),
+      supplierId: product.supplierId || '',
     });
     setFormErrors({});
+    setSaveError('');
     setEditingProduct(product);
     setShowAddModal(true);
     setOpenMenuId(null);
@@ -70,41 +166,59 @@ export function InventoryView() {
     if (!form.name.trim()) errors.name = 'Required';
     if (!form.price || isNaN(Number(form.price)) || Number(form.price) <= 0) errors.price = 'Enter a valid price';
     if (!form.costPrice || isNaN(Number(form.costPrice)) || Number(form.costPrice) <= 0) errors.costPrice = 'Enter a valid price';
-    if (!form.barcode.trim()) errors.barcode = 'Required';
+    // Barcode is no longer required — auto-generated if empty
     if (!form.stock || isNaN(Number(form.stock)) || Number(form.stock) < 0) errors.stock = 'Enter a valid number';
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!validateForm()) return;
+    setSaveError('');
     const productData = {
       name: form.name.trim(),
       price: parseFloat(form.price),
       costPrice: parseFloat(form.costPrice),
       category: form.category,
-      image: form.image || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=400&h=400&fit=crop',
-      barcode: form.barcode.trim(),
+      image: form.image,
+      barcode: form.barcode.trim() || generateBarcodeNumber(),
       sku: form.sku.trim() || `SKU-${Date.now().toString(36).toUpperCase()}`,
       variants: form.variants.trim() || '-',
       stock: parseInt(form.stock),
+      supplierId: form.supplierId || undefined,
     };
-    if (editingProduct) {
-      updateProduct({ ...productData, id: editingProduct.id });
-    } else {
-      addProduct(productData);
+
+    try {
+      if (editingProduct) {
+        await updateProduct({ ...productData, id: editingProduct.id });
+      } else {
+        await addProduct(productData);
+      }
+      setShowAddModal(false);
+    } catch (error) {
+      if (isUniqueConstraintError(error, 'products', 'barcode')) {
+        setFormErrors((prev) => ({ ...prev, barcode: 'This barcode already exists.' }));
+        return;
+      }
+
+      if (isUniqueConstraintError(error, 'products', 'sku')) {
+        setFormErrors((prev) => ({ ...prev, sku: 'This SKU already exists.' }));
+        return;
+      }
+
+      setSaveError(getErrorMessage(error));
     }
-    setShowAddModal(false);
   };
 
-  const handleDelete = (id: string) => {
-    deleteProduct(id);
+  const handleDelete = async (id: string) => {
+    await deleteProduct(id);
     setDeleteConfirmId(null);
     setOpenMenuId(null);
   };
 
   const updateField = (field: string, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+    if (saveError) setSaveError('');
     if (formErrors[field]) setFormErrors((prev) => { const n = { ...prev }; delete n[field]; return n; });
   };
 
@@ -151,7 +265,7 @@ export function InventoryView() {
         </div>
       </div>
 
-      <div className="bg-card border border-border rounded-lg overflow-hidden">
+      <div className="bg-card border border-border rounded-lg overflow-visible">
         <table className="w-full">
           <thead className="bg-muted/50 border-b border-border">
             <tr>
@@ -168,12 +282,16 @@ export function InventoryView() {
             </tr>
           </thead>
           <tbody>
-            {filteredInventory.map((item) => (
+            {filteredInventory.map((item, index) => (
               <tr key={item.id} className="border-b border-border last:border-0 hover:bg-muted/20">
                 <td className="px-6 py-4">
-                  <div className="w-12 h-12 bg-muted rounded-lg overflow-hidden">
-                    <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-                  </div>
+                  <ItemImage
+                    src={item.image}
+                    alt={item.name}
+                    category={item.category}
+                    className="w-12 h-12"
+                    iconClassName="w-5 h-5"
+                  />
                 </td>
                 <td className="px-6 py-4 text-muted-foreground">{item.sku}</td>
                 <td className="px-6 py-4 text-muted-foreground font-mono text-sm">{item.barcode}</td>
@@ -185,8 +303,8 @@ export function InventoryView() {
                     {item.stock}
                   </span>
                 </td>
-                <td className="px-6 py-4 text-muted-foreground">${item.costPrice.toFixed(2)}</td>
-                <td className="px-6 py-4">${item.price.toFixed(2)}</td>
+                <td className="px-6 py-4 text-muted-foreground">{formatDz(item.costPrice)}</td>
+                <td className="px-6 py-4">{formatDz(item.price)}</td>
                 <td className="px-6 py-4">
                   <div className="relative">
                     <button
@@ -198,13 +316,20 @@ export function InventoryView() {
                     {openMenuId === item.id && (
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setOpenMenuId(null)} />
-                        <div className="absolute right-0 top-8 bg-card border border-border rounded-lg shadow-lg z-20 w-36 py-1">
+                        <div className={`absolute right-0 bg-card border border-border rounded-lg shadow-lg z-20 w-44 py-1 ${index >= filteredInventory.length - 2 ? 'bottom-8' : 'top-8'}`}>
                           <button
                             onClick={() => openEdit(item)}
                             className="w-full px-4 py-2 text-left text-sm hover:bg-muted flex items-center gap-2"
                           >
                             <Pencil className="w-3.5 h-3.5" />
                             Edit
+                          </button>
+                          <button
+                            onClick={() => { setBarcodeForProduct(item); setOpenMenuId(null); }}
+                            className="w-full px-4 py-2 text-left text-sm hover:bg-muted flex items-center gap-2 text-primary"
+                          >
+                            <ScanBarcode className="w-3.5 h-3.5" />
+                            Barcode
                           </button>
                           <button
                             onClick={() => { setDeleteConfirmId(item.id); setOpenMenuId(null); }}
@@ -266,26 +391,40 @@ export function InventoryView() {
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">SKU <span className="text-xs">(optional)</span></label>
-                  <input
-                    value={form.sku}
-                    onChange={(e) => updateField('sku', e.target.value)}
-                    className="w-full px-3 py-2.5 bg-input-background border border-border rounded-lg text-sm"
-                    placeholder="Auto-generated if empty"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">Barcode *</label>
+              <div>
+                <label className="text-sm text-muted-foreground mb-1 block">SKU <span className="text-xs">(optional)</span></label>
+                <input
+                  value={form.sku}
+                  onChange={(e) => updateField('sku', e.target.value)}
+                  className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.sku ? 'border-red-400' : 'border-border'}`}
+                  placeholder="Auto-generated if empty"
+                />
+                {formErrors.sku && <p className="text-red-500 text-xs mt-1">{formErrors.sku}</p>}
+              </div>
+              <div>
+                <label className="text-sm text-muted-foreground mb-1 block">Barcode <span className="text-xs">(auto-generated if empty)</span></label>
+                <div className="flex gap-2">
                   <input
                     value={form.barcode}
                     onChange={(e) => updateField('barcode', e.target.value)}
-                    className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.barcode ? 'border-red-400' : 'border-border'}`}
-                    placeholder="e.g. 8901234567010"
+                    className={`flex-1 px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.barcode ? 'border-red-400' : 'border-border'}`}
+                    placeholder="Auto-generated if empty"
                   />
-                  {formErrors.barcode && <p className="text-red-500 text-xs mt-1">{formErrors.barcode}</p>}
+                  <button
+                    type="button"
+                    onClick={() => setShowBarcodeGenerator(true)}
+                    className="px-3 py-2.5 bg-primary/10 text-primary border border-primary/30 rounded-lg hover:bg-primary/20 transition-colors flex items-center gap-1.5 text-sm whitespace-nowrap"
+                  >
+                    <ScanBarcode className="w-4 h-4" />
+                    Generate
+                  </button>
                 </div>
+                {formErrors.barcode && <p className="text-red-500 text-xs mt-1">{formErrors.barcode}</p>}
+                {form.barcode && (
+                  <div className="mt-2 bg-white border border-border rounded-lg p-2 flex justify-center">
+                    <BarcodeDisplay value={form.barcode} width={1.5} height={40} />
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -299,6 +438,7 @@ export function InventoryView() {
                     className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.costPrice ? 'border-red-400' : 'border-border'}`}
                     placeholder="0.00"
                   />
+                  <p className="text-xs text-muted-foreground mt-1">Currency: DZ</p>
                   {formErrors.costPrice && <p className="text-red-500 text-xs mt-1">{formErrors.costPrice}</p>}
                 </div>
                 <div>
@@ -312,6 +452,7 @@ export function InventoryView() {
                     className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.price ? 'border-red-400' : 'border-border'}`}
                     placeholder="0.00"
                   />
+                  <p className="text-xs text-muted-foreground mt-1">Currency: DZ</p>
                   {formErrors.price && <p className="text-red-500 text-xs mt-1">{formErrors.price}</p>}
                 </div>
               </div>
@@ -319,7 +460,7 @@ export function InventoryView() {
                 <div className="bg-muted/50 border border-border rounded-lg px-4 py-3 flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Profit per unit</span>
                   <span className={`text-sm ${Number(form.price) - Number(form.costPrice) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    ${(Number(form.price) - Number(form.costPrice)).toFixed(2)}
+                    {formatDz(Number(form.price) - Number(form.costPrice))}
                     <span className="text-xs text-muted-foreground ml-2">
                       ({((Number(form.price) - Number(form.costPrice)) / Number(form.costPrice) * 100).toFixed(1)}%)
                     </span>
@@ -338,6 +479,14 @@ export function InventoryView() {
                     placeholder="0"
                   />
                   {formErrors.stock && <p className="text-red-500 text-xs mt-1">{formErrors.stock}</p>}
+                </div>
+                <div>
+                  <label className="text-sm text-muted-foreground mb-1 block">Supplier (Optional)</label>
+                  <SupplierSelect 
+                    suppliers={suppliers} 
+                    value={form.supplierId} 
+                    onChange={(val) => updateField('supplierId', val)} 
+                  />
                 </div>
               </div>
               <div>
@@ -370,33 +519,41 @@ export function InventoryView() {
                   }}
                   className="border-2 border-dashed border-border rounded-lg p-4 cursor-pointer hover:border-primary/50 transition-colors"
                 >
-                  {form.image ? (
-                    <div className="flex items-center gap-4">
-                      <div className="w-20 h-20 rounded-lg overflow-hidden bg-muted flex-shrink-0">
-                        <img src={form.image} alt="Preview" className="w-full h-full object-cover" />
+                    {form.image ? (
+                      <div className="flex items-center gap-4">
+                        <ItemImage
+                          src={form.image}
+                          alt="Preview"
+                          category={form.category}
+                          className="w-20 h-20 rounded-lg bg-muted flex-shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm mb-1">Image uploaded</p>
+                          <p className="text-xs text-muted-foreground">Click to change</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); updateField('image', ''); }}
+                          className="text-muted-foreground hover:text-destructive"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm mb-1">Image uploaded</p>
-                        <p className="text-xs text-muted-foreground">Click to change</p>
+                    ) : (
+                      <div className="flex flex-col items-center gap-2 py-2 text-muted-foreground">
+                        <ItemImagePlaceholder category={form.category} className="w-20 h-20 bg-muted flex-shrink-0" iconClassName="w-8 h-8" />
+                        <p className="text-sm">Click to upload image</p>
+                        <p className="text-xs">PNG, JPG up to 5MB</p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); updateField('image', ''); }}
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-2 py-2 text-muted-foreground">
-                      <Upload className="w-8 h-8 opacity-40" />
-                      <p className="text-sm">Click to upload image</p>
-                      <p className="text-xs">PNG, JPG up to 5MB</p>
-                    </div>
-                  )}
+                    )}
                 </div>
               </div>
             </div>
+            {saveError && (
+              <div className="mx-5 mb-3 -mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {saveError}
+              </div>
+            )}
             <div className="flex gap-3 p-5 border-t border-border">
               <button
                 onClick={() => setShowAddModal(false)}
@@ -405,7 +562,7 @@ export function InventoryView() {
                 Cancel
               </button>
               <button
-                onClick={handleSave}
+                onClick={() => void handleSave()}
                 className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
               >
                 {editingProduct ? 'Save Changes' : 'Add Product'}
@@ -431,7 +588,7 @@ export function InventoryView() {
                 Cancel
               </button>
               <button
-                onClick={() => handleDelete(deleteConfirmId)}
+                onClick={() => void handleDelete(deleteConfirmId)}
                 className="flex-1 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
               >
                 Delete
@@ -439,6 +596,32 @@ export function InventoryView() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Barcode Generator Modal (from form) */}
+      {showBarcodeGenerator && (
+        <BarcodeGeneratorModal
+          initialValue={form.barcode || undefined}
+          productName={form.name || undefined}
+          onApply={(barcode) => {
+            updateField('barcode', barcode);
+            setShowBarcodeGenerator(false);
+          }}
+          onClose={() => setShowBarcodeGenerator(false)}
+        />
+      )}
+
+      {/* Barcode Generator Modal (from table action) */}
+      {barcodeForProduct && (
+        <BarcodeGeneratorModal
+          initialValue={barcodeForProduct.barcode}
+          productName={barcodeForProduct.name}
+          onApply={(barcode) => {
+            void updateProduct({ ...barcodeForProduct, barcode });
+            setBarcodeForProduct(null);
+          }}
+          onClose={() => setBarcodeForProduct(null)}
+        />
       )}
     </div>
   );

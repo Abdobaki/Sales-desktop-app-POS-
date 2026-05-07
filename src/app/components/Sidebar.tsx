@@ -1,4 +1,4 @@
-import { ShoppingCart, Package, Users, BarChart3, Settings, ScanBarcode } from 'lucide-react';
+import { ShoppingCart, Package, Users, BarChart3, Settings, ScanBarcode, Truck, PackageOpen, History } from 'lucide-react';
 
 type NavItem = {
   id: string;
@@ -10,8 +10,11 @@ const navItems: NavItem[] = [
   { id: 'pos', label: 'POS', icon: ShoppingCart },
   { id: 'scanner', label: 'Scanner', icon: ScanBarcode },
   { id: 'inventory', label: 'Inventory', icon: Package },
+  { id: 'series', label: 'Boxes', icon: PackageOpen },
   { id: 'customers', label: 'Customers', icon: Users },
+  { id: 'suppliers', label: 'Suppliers', icon: Truck },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
+  { id: 'history', label: 'History', icon: History },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 

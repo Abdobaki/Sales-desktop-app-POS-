@@ -1,0 +1,118 @@
+1) Test Setup (Clean + Repeatable)
+- Start app in desktop mode: run npm run electron:dev (or npm run electron:start after build).
+- Use a fresh test profile if possible (so old DB data doesn’t hide bugs).
+- In Settings, set currency to DZD first (important for DZ checks).
+- Create baseline products (example):
+  - P-TSHIRT: sale 2000, cost 1200, stock 20
+  - P-CAP: sale 800, cost 400, stock 10
+  - P-LOW: sale 500, cost 250, stock 2
+- Create one customer and one supplier (for list/report sanity).
+- Create one series with:
+  - Box barcode set
+  - boxQuantity = 3
+  - Sizes (e.g. M qty 5, L qty 4)
+---
+2) Checkout + Inventory Functionality
+- Go to POS and add P-TSHIRT, P-CAP; edit quantity inline (increase/decrease).
+- Verify line totals, subtotal, total update instantly and correctly.
+- Complete checkout.
+- Expected:
+  - Order persists after app restart (not session-only).
+  - Product stock is reduced in Inventory.
+  - Reports eventually include this order.
+- Error signs:
+  - Quantity field accepts invalid values (negative, NaN, blank) and breaks totals.
+  - Checkout shows success but stock does not move.
+  - Order disappears after restart.
+---
+3) Scanner + Series Box Flow
+- In Scanner/POS barcode input, scan the series box barcode.
+- Sell 1 box, then repeat until boxQuantity reaches 0.
+- Expected:
+  - Box quantity decrements by 1 each sale.
+  - Sale blocked at 0 with clear feedback.
+  - Size quantities should not decrease when selling a box (only box stock).
+- Then sell one series size item (not box).
+- Expected:
+  - Correct size quantity decreases.
+  - Box quantity unchanged.
+- Error signs:
+  - Box sale reduces size quantities.
+  - Size sale reduces box quantity.
+  - Can sell when stock is 0.
+---
+4) Reports Accuracy (Core Validation)
+Use a known mini dataset so math is predictable.
+After a few sales, verify on Reports:
+- Total Revenue = sum of order totals
+- Total Orders = count of orders in date range
+- Total Items = sum of sold quantities
+- Gross Profit = sum of (unit sale - unit cost) * qty
+- Low stock count reflects settings threshold
+Also validate charts:
+- Sales/Profit daily lines align with transaction dates.
+- Daily bar chart values match daily totals.
+Error signs:
+- Revenue/profit mismatch with manual calculator.
+- Orders outside selected date range appearing.
+- Empty charts despite existing sales in range.
+---
+5) Currency/UI Formatting Checks (DZ, no $)
+Check Reports/Dashboard areas where money appears:
+- Summary cards (Revenue, Profit)
+- Tooltips on charts
+- Recent transactions
+- Top products revenue/profit
+- Generated custom report panel
+- Export CSV text totals
+Expected:
+- Display style like 12,345.67 DZ (or ... DZD for non-mapped codes), no $ sign.
+- No dollar icon for revenue card (should no longer imply USD).
+Also test setting currency to another code (e.g. USD):
+- Expected: text suffix changes to USD (still no $ symbol).
+- Error sign: any $ appears in dashboard/report amounts.
+---
+6) Settings Persistence + Behavior
+In Settings:
+- Change store info, low-stock threshold, payment toggles, notifications.
+- Save and restart app.
+- Expected:
+  - Values reload exactly as saved.
+  - Reports low-stock card reacts to threshold changes.
+- Error signs:
+  - Save appears successful but values revert on restart.
+  - Partial save (some sections persist, others don’t).
+---
+7) UX & Visual Quality Checklist
+For each page (POS, Scanner, Series, Reports, Settings), verify:
+- Spacing/alignment consistent (cards, buttons, inputs)
+- No clipped text/icons at common widths
+- Empty/loading/error states readable and styled correctly
+- Buttons disabled when action invalid (no silent failures)
+- Feedback messages are clear and actionable
+- Keyboard flow works (scan input focus returns properly)
+Mobile/narrow window checks:
+- Resize app to narrow widths; ensure charts/cards don’t overlap.
+- No horizontal overflow from summary grids and tables.
+---
+8) Regression Checks
+- Restart app and re-open each module; ensure no crash and data still present.
+- Create/edit/delete a series after several sales.
+- Run another checkout after changing settings.
+- Export report CSV and open it:
+  - Header/date range correct
+  - Revenue/profit columns numeric and aligned with UI totals
+---
+9) Bug Logging Template (Use this for each issue)
+- Title: short + specific (Reports: Profit total off by 200 DZ)
+- Steps to reproduce
+- Expected result
+- Actual result
+- Screenshot/video
+- Environment: OS, app mode, date range, test data used
+- Severity:
+  - P1 data loss/crash
+  - P2 wrong financial totals/inventory
+  - P3 UI/UX confusion or minor formatting
+---
+If you want, I can also give you a one-page pass/fail checklist version (quick QA sheet) you can print and tick during testing.

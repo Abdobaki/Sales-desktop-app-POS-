@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Search, Plus, Mail, Phone, Pencil, Trash2, X } from 'lucide-react';
 import { getCustomers, addCustomer, updateCustomer, deleteCustomer, subscribeCustomers, type Customer } from './data/customers';
+import { getErrorMessage } from './data/shared';
 
 export function CustomersView() {
   const [customers, setCustomers] = useState<Customer[]>(getCustomers);
@@ -11,6 +12,8 @@ export function CustomersView() {
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newEmail, setNewEmail] = useState('');
+  const [editError, setEditError] = useState('');
+  const [addError, setAddError] = useState('');
 
   useEffect(() => {
     return subscribeCustomers(() => setCustomers(getCustomers()));
@@ -21,23 +24,33 @@ export function CustomersView() {
     c.email.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleDelete = (id: string) => {
-    deleteCustomer(id);
+  const handleDelete = async (id: string) => {
+    await deleteCustomer(id);
     setDeleteConfirmId(null);
   };
 
-  const handleSaveEdit = (updated: Customer) => {
-    updateCustomer(updated);
-    setEditingCustomer(null);
+  const handleSaveEdit = async (updated: Customer) => {
+    setEditError('');
+    try {
+      await updateCustomer(updated);
+      setEditingCustomer(null);
+    } catch (error) {
+      setEditError(getErrorMessage(error));
+    }
   };
 
-  const handleAddCustomer = () => {
+  const handleAddCustomer = async () => {
     if (!newName.trim() || !newPhone.trim()) return;
-    addCustomer({ name: newName.trim(), email: newEmail.trim(), phone: newPhone.trim() });
-    setNewName('');
-    setNewPhone('');
-    setNewEmail('');
-    setShowAddModal(false);
+    setAddError('');
+    try {
+      await addCustomer({ name: newName.trim(), email: newEmail.trim(), phone: newPhone.trim() });
+      setNewName('');
+      setNewPhone('');
+      setNewEmail('');
+      setShowAddModal(false);
+    } catch (error) {
+      setAddError(getErrorMessage(error));
+    }
   };
 
   return (
@@ -48,7 +61,10 @@ export function CustomersView() {
           <p className="text-muted-foreground mt-1">Manage customer relationships</p>
         </div>
         <button
-          onClick={() => setShowAddModal(true)}
+          onClick={() => {
+            setAddError('');
+            setShowAddModal(true);
+          }}
           className="px-5 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 flex items-center gap-2"
         >
           <Plus className="w-5 h-5" />
@@ -88,7 +104,10 @@ export function CustomersView() {
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setEditingCustomer({ ...customer })}
+                  onClick={() => {
+                    setEditError('');
+                    setEditingCustomer({ ...customer });
+                  }}
                   className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                   title="Edit"
                 >
@@ -97,7 +116,7 @@ export function CustomersView() {
                 {deleteConfirmId === customer.id ? (
                   <div className="flex items-center gap-1">
                     <button
-                      onClick={() => handleDelete(customer.id)}
+                      onClick={() => void handleDelete(customer.id)}
                       className="px-3 py-1 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700"
                     >
                       Confirm
@@ -132,7 +151,7 @@ export function CustomersView() {
               </div>
               <div>
                 <div className="text-sm text-muted-foreground mb-1">Last Purchase</div>
-                <div>{new Date(customer.lastPurchase).toLocaleDateString()}</div>
+                <div>{customer.lastPurchase === '-' ? '-' : new Date(customer.lastPurchase).toLocaleDateString()}</div>
               </div>
             </div>
           </div>
@@ -175,6 +194,11 @@ export function CustomersView() {
                 />
               </div>
             </div>
+            {editError && (
+              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {editError}
+              </div>
+            )}
             <div className="flex gap-3 mt-6">
               <button
                 onClick={() => setEditingCustomer(null)}
@@ -183,7 +207,7 @@ export function CustomersView() {
                 Cancel
               </button>
               <button
-                onClick={() => handleSaveEdit(editingCustomer)}
+                onClick={() => void handleSaveEdit(editingCustomer)}
                 className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
               >
                 Save Changes
@@ -233,6 +257,11 @@ export function CustomersView() {
                 />
               </div>
             </div>
+            {addError && (
+              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {addError}
+              </div>
+            )}
             <div className="flex gap-3 mt-6">
               <button
                 onClick={() => setShowAddModal(false)}
@@ -241,7 +270,7 @@ export function CustomersView() {
                 Cancel
               </button>
               <button
-                onClick={handleAddCustomer}
+                onClick={() => void handleAddCustomer()}
                 disabled={!newName.trim() || !newPhone.trim()}
                 className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >

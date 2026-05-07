@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Search, UserPlus, X, Check } from 'lucide-react';
 import { getCustomers, addCustomer, subscribeCustomers, type Customer } from './data/customers';
+import { getErrorMessage } from './data/shared';
 
 type Props = {
   selectedCustomer: Customer | null;
@@ -15,6 +16,7 @@ export function CustomerPicker({ selectedCustomer, onSelect, onClose }: Props) {
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('');
+  const [createError, setCreateError] = useState('');
 
   useEffect(() => {
     return subscribeCustomers(() => setCustomers(getCustomers()));
@@ -27,11 +29,16 @@ export function CustomerPicker({ selectedCustomer, onSelect, onClose }: Props) {
       c.phone.includes(search)
   );
 
-  const handleCreateCustomer = () => {
+  const handleCreateCustomer = async () => {
     if (!newName.trim()) return;
-    const c = addCustomer({ name: newName.trim(), email: newEmail.trim(), phone: newPhone.trim() });
-    onSelect(c);
-    onClose();
+    setCreateError('');
+    try {
+      const c = await addCustomer({ name: newName.trim(), email: newEmail.trim(), phone: newPhone.trim() });
+      onSelect(c);
+      onClose();
+    } catch (error) {
+      setCreateError(getErrorMessage(error));
+    }
   };
 
   return (
@@ -106,7 +113,10 @@ export function CustomerPicker({ selectedCustomer, onSelect, onClose }: Props) {
 
             <div className="p-4 border-t border-border">
               <button
-                onClick={() => setShowNew(true)}
+                onClick={() => {
+                  setCreateError('');
+                  setShowNew(true);
+                }}
                 className="w-full py-3 flex items-center justify-center gap-2 border border-dashed border-border rounded-lg hover:border-primary hover:text-primary transition-colors text-sm"
               >
                 <UserPlus className="w-5 h-5" />
@@ -152,13 +162,18 @@ export function CustomerPicker({ selectedCustomer, onSelect, onClose }: Props) {
                 Back
               </button>
               <button
-                onClick={handleCreateCustomer}
+                onClick={() => void handleCreateCustomer()}
                 disabled={!newName.trim()}
                 className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors text-sm"
               >
                 Create & Select
               </button>
             </div>
+            {createError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {createError}
+              </div>
+            )}
           </div>
         )}
       </div>
