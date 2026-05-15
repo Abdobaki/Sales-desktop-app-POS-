@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Search, Plus, MoreVertical, ChevronDown, X, Pencil, Trash2, ScanBarcode } from 'lucide-react';
 import { getProducts, addProduct, updateProduct, deleteProduct, subscribeProducts, type Product } from './data/products';
 import { getSuppliers, subscribeSuppliers } from './data/suppliers';
-import { getErrorMessage, isUniqueConstraintError } from './data/shared';
+import { getErrorMessage, isUniqueConstraintError, normalizeBarcodeScan } from './data/shared';
 import { BarcodeGeneratorModal, BarcodeDisplay, generateBarcodeNumber } from './BarcodeGenerator';
 import { ItemImage, ItemImagePlaceholder } from './ItemImagePlaceholder';
 
@@ -115,6 +115,9 @@ export function InventoryView() {
   const [showBarcodeGenerator, setShowBarcodeGenerator] = useState(false);
   const [barcodeForProduct, setBarcodeForProduct] = useState<Product | null>(null);
   const [saveError, setSaveError] = useState('');
+  const [barcodeSearchMode, setBarcodeSearchMode] = useState(false);
+  const [barcodeQuery, setBarcodeQuery] = useState('');
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const unsubProducts = subscribeProducts(() => setProducts(getProducts()));
@@ -125,8 +128,24 @@ export function InventoryView() {
     };
   }, []);
 
+  // Focus the barcode input when barcode mode is toggled on
+  useEffect(() => {
+    if (barcodeSearchMode) {
+      barcodeInputRef.current?.focus();
+    }
+  }, [barcodeSearchMode]);
+
   const filteredInventory = products.filter((item) => {
-    const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    // Barcode search mode: exact or prefix match on barcode
+    if (barcodeSearchMode && barcodeQuery.trim()) {
+      const matchesBarcode = item.barcode === barcodeQuery.trim() ||
+                             item.barcode.startsWith(barcodeQuery.trim());
+      const matchesCategory = selectedCategory === 'All Categories' || item.category === selectedCategory;
+      return matchesBarcode && matchesCategory;
+    }
+    // Normal search mode
+    const matchesSearch = !searchQuery || 
+                         item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          item.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          item.barcode.includes(searchQuery);
     const matchesCategory = selectedCategory === 'All Categories' || item.category === selectedCategory;
@@ -222,6 +241,18 @@ export function InventoryView() {
     if (formErrors[field]) setFormErrors((prev) => { const n = { ...prev }; delete n[field]; return n; });
   };
 
+  const toggleBarcodeSearch = () => {
+    if (barcodeSearchMode) {
+      // Turning off barcode mode — clear barcode query
+      setBarcodeQuery('');
+      setBarcodeSearchMode(false);
+    } else {
+      // Turning on barcode mode — clear normal search
+      setSearchQuery('');
+      setBarcodeSearchMode(true);
+    }
+  };
+
   return (
     <div className="flex-1 p-8 overflow-auto">
       <div className="mb-6 flex items-center justify-between">
@@ -239,16 +270,50 @@ export function InventoryView() {
       </div>
 
       <div className="mb-6 flex gap-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-6 h-6 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search inventory..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-input-background border border-border rounded-lg"
-          />
-        </div>
+        {barcodeSearchMode ? (
+          <div className="relative flex-1 max-w-md">
+            <ScanBarcode className="absolute left-3.5 top-1/2 -translate-y-1/2 w-6 h-6 text-emerald-500" />
+            <input
+              ref={barcodeInputRef}
+              type="text"
+              placeholder="Scan or type barcode..."
+              value={barcodeQuery}
+              onChange={(e) => setBarcodeQuery(normalizeBarcodeScan(e.target.value))}
+              className="w-full pl-12 pr-10 py-3 bg-emerald-50 border-2 border-emerald-300 rounded-lg focus:border-emerald-500 focus:outline-none transition-colors font-mono dark:bg-emerald-950/30 dark:border-emerald-700 dark:focus:border-emerald-500"
+            />
+            {barcodeQuery && (
+              <button
+                onClick={() => setBarcodeQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-6 h-6 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search inventory..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-12 pr-4 py-3 bg-input-background border border-border rounded-lg"
+            />
+          </div>
+        )}
+        <button
+          onClick={toggleBarcodeSearch}
+          title={barcodeSearchMode ? 'Switch to normal search' : 'Search by barcode'}
+          className={`px-3.5 py-3 rounded-lg border flex items-center gap-2 transition-all ${
+            barcodeSearchMode 
+              ? 'bg-emerald-500 text-white border-emerald-500 hover:bg-emerald-600 shadow-sm shadow-emerald-200 dark:shadow-emerald-900' 
+              : 'bg-input-background border-border text-muted-foreground hover:text-foreground hover:border-foreground/30'
+          }`}
+        >
+          <ScanBarcode className="w-5 h-5" />
+          {barcodeSearchMode && <span className="text-sm font-medium">Scanning</span>}
+        </button>
         <div className="relative">
           <select
             value={selectedCategory}
@@ -406,7 +471,7 @@ export function InventoryView() {
                 <div className="flex gap-2">
                   <input
                     value={form.barcode}
-                    onChange={(e) => updateField('barcode', e.target.value)}
+                    onChange={(e) => updateField('barcode', normalizeBarcodeScan(e.target.value))}
                     className={`flex-1 px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.barcode ? 'border-red-400' : 'border-border'}`}
                     placeholder="Auto-generated if empty"
                   />

@@ -48,3 +48,27 @@ export function isUniqueConstraintError(error: unknown, table: string, column?: 
 export function formatCurrency(amount: number): string {
   return `${amount.toFixed(2)} DZ`;
 }
+
+/**
+ * Normalize barcode scanner input by converting keyboard symbols back to digits.
+ *
+ * Barcode scanners act as keyboard input devices — they simulate key presses.
+ * Depending on the OS keyboard layout, digit keys may produce symbols instead:
+ *
+ * QWERTY (Shift held): ! → 1, @ → 2, # → 3, $ → 4, % → 5, ^ → 6, & → 7, * → 8, ( → 9, ) → 0
+ * AZERTY (unshifted):  é → 2, è → 7, ç → 9, à → 0
+ */
+const SYMBOL_TO_DIGIT: Record<string, string> = {
+  // QWERTY Shift+number row
+  '!': '1', '@': '2', '#': '3', '$': '4', '%': '5',
+  '^': '6', '&': '7', '*': '8', '(': '9', ')': '0',
+  // AZERTY-specific (non-conflicting)
+  'é': '2', 'è': '7', 'ç': '9', 'à': '0',
+};
+
+export function normalizeBarcodeScan(raw: string): string {
+  return raw
+    .split('')
+    .map((ch) => SYMBOL_TO_DIGIT[ch] ?? ch)
+    .join('');
+}

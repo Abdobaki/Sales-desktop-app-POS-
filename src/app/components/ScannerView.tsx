@@ -4,7 +4,7 @@ import { getProducts, subscribeProducts, type Product } from './data/products';
 import { getSeries, findSerieByBoxBarcode, refreshSeries, subscribeSeries, getSerieBoxQuantity, type Serie, type SerieComponent } from './data/series';
 import { type Customer } from './data/customers';
 import { checkoutSale } from './data/sales';
-import { getErrorMessage } from './data/shared';
+import { getErrorMessage, normalizeBarcodeScan } from './data/shared';
 import { CustomerPicker } from './CustomerPicker';
 import { BoxSaleModal } from './BoxSaleModal';
 import { ItemImage } from './ItemImagePlaceholder';
@@ -106,7 +106,7 @@ export function ScannerView() {
 
   const handleScan = (e: React.FormEvent) => {
     e.preventDefault();
-    const code = barcodeInput.trim();
+    const code = normalizeBarcodeScan(barcodeInput.trim());
     if (!code) return;
 
     const now = new Date().toLocaleTimeString();
