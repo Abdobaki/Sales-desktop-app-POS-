@@ -12,6 +12,9 @@ export type SaleCheckoutContext = {
   customerId?: string | null;
   paymentMethodCode?: string | null;
   items: SaleCartItem[];
+  partialPayment?: boolean;
+  paidAmountCents?: number;
+  debtNotes?: string;
 };
 
 export type SaleCheckoutResult = {
@@ -25,6 +28,9 @@ export type SaleCheckoutResult = {
   sourceView: string;
   customerId: string | null;
   paymentMethodCode: string | null;
+  debtId: string | null;
+  paidAmountCents: number;
+  remainingCents: number;
 };
 
 function generateLocalReceiptNumber() {
@@ -154,5 +160,8 @@ export async function checkoutSale(context: SaleCheckoutContext): Promise<SaleCh
     sourceView: context.sourceView,
     customerId: context.customerId ?? null,
     paymentMethodCode: context.paymentMethodCode ?? null,
+    debtId: null,
+    paidAmountCents: subtotalCents,
+    remainingCents: 0,
   };
 }

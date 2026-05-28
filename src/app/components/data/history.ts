@@ -47,7 +47,7 @@ export async function fetchHistory() {
         id: item.id,
         type: 'sale',
         sourceId: item.sales_order_id,
-        date: toDateOnly(order?.order_date || ''),
+        date: toDateOnly(order?.sold_at || ''),
         productName: item.product_name_snapshot || 'Unknown Product',
         productId: item.product_id,
         quantity: item.quantity,

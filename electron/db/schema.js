@@ -302,6 +302,31 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 6,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS debts (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          sales_order_id TEXT NOT NULL,
+          customer_id TEXT NOT NULL,
+          total_cents INTEGER NOT NULL CHECK (total_cents > 0),
+          paid_cents INTEGER NOT NULL DEFAULT 0 CHECK (paid_cents >= 0),
+          remaining_cents INTEGER NOT NULL CHECK (remaining_cents >= 0),
+          status TEXT NOT NULL DEFAULT 'unpaid' CHECK (status IN ('unpaid', 'partial', 'paid')),
+          notes TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (sales_order_id) REFERENCES sales_orders(id) ON DELETE CASCADE,
+          FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_debts_customer ON debts(customer_id, status);
+        CREATE INDEX IF NOT EXISTS idx_debts_status ON debts(status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_debts_order ON debts(sales_order_id);
+      `);
+    },
+  },
 ];
 
 function getUserVersion(db) {

@@ -672,6 +672,33 @@ function checkoutSale(db, rawPayload = {}) {
       );
     }
 
+    // Handle partial payment / debt creation
+    const isPartialPayment = payload.partialPayment === true;
+    let debtId = null;
+    let paidAmountCents = totalCents;
+    let remainingCents = 0;
+
+    if (isPartialPayment) {
+      paidAmountCents = Math.max(0, Math.trunc(toNumber(payload.paidAmountCents ?? 0, 0)));
+      if (paidAmountCents >= totalCents) {
+        paidAmountCents = totalCents;
+      } else {
+        remainingCents = totalCents - paidAmountCents;
+        if (!customerId) {
+          throw new Error('A customer must be assigned for partial payments.');
+        }
+
+        const debtStatus = paidAmountCents > 0 ? 'partial' : 'unpaid';
+        debtId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+        const debtNotes = String(payload.debtNotes ?? '').trim() || null;
+
+        db.prepare(`
+          INSERT INTO debts (id, sales_order_id, customer_id, total_cents, paid_cents, remaining_cents, status, notes, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(debtId, orderId, customerId, totalCents, paidAmountCents, remainingCents, debtStatus, debtNotes, now, now);
+      }
+    }
+
     return {
       orderId,
       receiptNumber,
@@ -683,6 +710,9 @@ function checkoutSale(db, rawPayload = {}) {
       sourceView,
       customerId,
       paymentMethodCode,
+      debtId,
+      paidAmountCents,
+      remainingCents,
     };
   });
 
@@ -953,14 +983,109 @@ function deletePurchase(db, purchaseId) {
   return transaction();
 }
 
+function listDebts(db, rawPayload = {}) {
+  const payload = normalizeObject(rawPayload, 'payload');
+  const status = textOrNull(payload.status);
+  const customerId = textOrNull(payload.customerId ?? payload.customer_id);
+
+  let sql = `
+    SELECT d.*, c.name AS customer_name, c.phone AS customer_phone,
+           so.receipt_number, so.sold_at
+    FROM debts d
+    JOIN customers c ON c.id = d.customer_id
+    JOIN sales_orders so ON so.id = d.sales_order_id
+  `;
+  const conditions = [];
+  const params = [];
+
+  if (status) {
+    conditions.push('d.status = ?');
+    params.push(status);
+  }
+  if (customerId) {
+    conditions.push('d.customer_id = ?');
+    params.push(customerId);
+  }
+
+  if (conditions.length > 0) {
+    sql += ' WHERE ' + conditions.join(' AND ');
+  }
+
+  sql += ' ORDER BY d.created_at DESC';
+
+  return db.prepare(sql).all(...params);
+}
+
+function getDebtById(db, id) {
+  const debtId = textOrNull(id);
+  if (!debtId) throw new Error('Missing debt id.');
+
+  return db.prepare(`
+    SELECT d.*, c.name AS customer_name, c.phone AS customer_phone,
+           so.receipt_number, so.sold_at
+    FROM debts d
+    JOIN customers c ON c.id = d.customer_id
+    JOIN sales_orders so ON so.id = d.sales_order_id
+    WHERE d.id = ?
+  `).get(debtId) ?? null;
+}
+
+function recordDebtPayment(db, rawPayload = {}) {
+  const payload = normalizeObject(rawPayload, 'payload');
+  const debtId = textOrNull(payload.debtId ?? payload.id);
+  if (!debtId) throw new Error('Missing debt id.');
+
+  const amountCents = Math.max(0, Math.trunc(toNumber(payload.amountCents, 0)));
+  if (amountCents <= 0) throw new Error('Payment amount must be positive.');
+
+  const now = nowIso();
+
+  const transaction = db.transaction(() => {
+    const debt = db.prepare('SELECT * FROM debts WHERE id = ?').get(debtId);
+    if (!debt) throw new Error('Debt not found.');
+    if (debt.status === 'paid') throw new Error('This debt is already fully paid.');
+
+    const newPaid = debt.paid_cents + amountCents;
+    const newRemaining = Math.max(0, debt.total_cents - newPaid);
+    const newStatus = newRemaining <= 0 ? 'paid' : 'partial';
+
+    db.prepare(`
+      UPDATE debts
+      SET paid_cents = ?, remaining_cents = ?, status = ?, updated_at = ?
+      WHERE id = ?
+    `).run(Math.min(newPaid, debt.total_cents), newRemaining, newStatus, now, debtId);
+
+    return {
+      id: debtId,
+      paidCents: Math.min(newPaid, debt.total_cents),
+      remainingCents: newRemaining,
+      status: newStatus,
+    };
+  });
+
+  return transaction();
+}
+
+function deleteDebt(db, id) {
+  const debtId = textOrNull(id);
+  if (!debtId) throw new Error('Missing debt id.');
+
+  const info = db.prepare('DELETE FROM debts WHERE id = ?').run(debtId);
+  return { deleted: info.changes > 0 };
+}
+
 export {
   checkoutSale,
+  deleteDebt,
   deletePurchase,
   deleteSaleOrderItem,
   deleteSeries,
+  getDebtById,
   getSeriesById,
+  listDebts,
   listSeries,
   persistSeries as saveSeries,
+  recordDebtPayment,
   updatePurchaseLine,
   updateSaleOrderItem,
 };

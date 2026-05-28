@@ -44,6 +44,13 @@ const historyApi = {
   deletePurchase: (purchaseId) => ipcRenderer.invoke('history:delete-purchase', purchaseId),
 };
 
+const debtsApi = {
+  list: (payload = {}) => ipcRenderer.invoke('debts:list', payload),
+  get: (id) => ipcRenderer.invoke('debts:get', id),
+  pay: (payload = {}) => ipcRenderer.invoke('debts:pay', payload),
+  delete: (id) => ipcRenderer.invoke('debts:delete', id),
+};
+
 for (const tableName of tableNames) {
   dbCrudApi[tableName] = {
     list: (options = {}) => ipcRenderer.invoke(`db:${tableName}:list`, options),
@@ -64,6 +71,7 @@ const electronAPI = {
     series: seriesApi,
     sales: salesApi,
     history: historyApi,
+    debts: debtsApi,
   },
 };
 

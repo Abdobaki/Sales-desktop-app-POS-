@@ -40,6 +40,9 @@ export function POSView() {
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
   const [boxSaleSerie, setBoxSaleSerie] = useState<Serie | null>(null);
   const [checkoutError, setCheckoutError] = useState('');
+  // Partial payment state
+  const [isPartialPayment, setIsPartialPayment] = useState(false);
+  const [paidAmountInput, setPaidAmountInput] = useState('');
   // Inline price editing state
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
   const [editPriceValue, setEditPriceValue] = useState('');
@@ -160,11 +163,23 @@ export function POSView() {
     if (cart.length === 0) return;
     setCheckoutError('');
 
+    if (isPartialPayment && !selectedCustomer) {
+      setCheckoutError('A customer must be assigned for partial payments.');
+      setShowCustomerPicker(true);
+      return;
+    }
+
+    const paidAmountCents = isPartialPayment
+      ? Math.round((parseFloat(paidAmountInput) || 0) * 100)
+      : undefined;
+
     try {
       const result = await checkoutSale({
         sourceView: 'pos',
         customerId: selectedCustomer?.id ?? null,
         items: cart,
+        partialPayment: isPartialPayment,
+        paidAmountCents,
       });
 
       setReceipt({
@@ -177,6 +192,8 @@ export function POSView() {
       });
       setCart([]);
       setSelectedCustomer(null);
+      setIsPartialPayment(false);
+      setPaidAmountInput('');
     } catch (error) {
       setCheckoutError(getErrorMessage(error));
     }
@@ -189,6 +206,8 @@ export function POSView() {
     setEditingQuantityId(null);
     setEditQuantityValue('');
     setCheckoutError('');
+    setIsPartialPayment(false);
+    setPaidAmountInput('');
   };
 
   const handlePrint = () => {
@@ -458,9 +477,52 @@ export function POSView() {
               <span className="text-lg">{formatDz(total)}</span>
             </div>
           </div>
+          {/* Partial Payment Toggle */}
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={isPartialPayment}
+                onChange={(e) => {
+                  setIsPartialPayment(e.target.checked);
+                  if (!e.target.checked) setPaidAmountInput('');
+                }}
+                className="w-4 h-4 accent-primary"
+              />
+              <span className="text-sm">Partial Payment (Debt)</span>
+            </label>
+            {isPartialPayment && (
+              <div className="space-y-2 pl-7">
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Amount Paid</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={paidAmountInput}
+                    onChange={(e) => setPaidAmountInput(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm"
+                  />
+                </div>
+                {paidAmountInput && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Remaining debt</span>
+                    <span className="text-red-600 font-medium">
+                      {formatDz(Math.max(0, total - (parseFloat(paidAmountInput) || 0)))}
+                    </span>
+                  </div>
+                )}
+                {!selectedCustomer && (
+                  <p className="text-xs text-amber-600">A customer is required for partial payments.</p>
+                )}
+              </div>
+            )}
+          </div>
+
           <button disabled={cart.length === 0} onClick={handleCheckout}
             className="w-full py-5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md">
-            Checkout / Pay
+            {isPartialPayment ? 'Checkout with Debt' : 'Checkout / Pay'}
           </button>
         </div>
       </div>

@@ -3,7 +3,8 @@ import { getDatabasePath } from '../db/index.js';
 import { registerCrudHandlers, TABLE_NAMES } from './crud.js';
 import { 
   checkoutSale, listSeries, getSeriesById, saveSeries, deleteSeries,
-  updateSaleOrderItem, deleteSaleOrderItem, updatePurchaseLine, deletePurchase 
+  updateSaleOrderItem, deleteSaleOrderItem, updatePurchaseLine, deletePurchase,
+  listDebts, getDebtById, recordDebtPayment, deleteDebt
 } from '../services/index.js';
 
 export function registerHandlers({ db }) {
@@ -66,6 +67,22 @@ export function registerHandlers({ db }) {
 
   ipcMain.handle('history:delete-purchase', (_event, purchaseId) => {
     return deletePurchase(db, purchaseId);
+  });
+
+  ipcMain.handle('debts:list', (_event, payload = {}) => {
+    return listDebts(db, payload);
+  });
+
+  ipcMain.handle('debts:get', (_event, id) => {
+    return getDebtById(db, id);
+  });
+
+  ipcMain.handle('debts:pay', (_event, payload = {}) => {
+    return recordDebtPayment(db, payload);
+  });
+
+  ipcMain.handle('debts:delete', (_event, id) => {
+    return deleteDebt(db, id);
   });
 
   registerCrudHandlers({ db });
