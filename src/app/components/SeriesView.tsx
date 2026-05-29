@@ -1,23 +1,31 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Search, Plus, X, Pencil, Trash2, ScanBarcode } from 'lucide-react';
 import { getSeries, addSerie, updateSerie, deleteSerie, refreshSeries, subscribeSeries, getSerieBoxQuantity, type Serie, type SerieComponent } from './data/series';
-import { getProducts, subscribeProducts, type Product } from './data/products';
+import { getProducts, addProduct, updateProduct, subscribeProducts, type Product } from './data/products';
+import { generateBarcodeNumber } from './BarcodeGenerator';
 import { ProductPicker } from './ProductPicker';
 import { getSuppliers, subscribeSuppliers } from './data/suppliers';
-import { getErrorMessage } from './data/shared';
+import { SeriesBoxStockManager } from './SeriesBoxStockManager';
+import { getErrorMessage, normalizeBarcodeScan } from './data/shared';
 import { BarcodeGeneratorModal, BarcodeDisplay } from './BarcodeGenerator';
 import { ItemImage, ItemImagePlaceholder } from './ItemImagePlaceholder';
 
 const serieCategories = ['Shoes', 'Shirts', 'Pants', 'Accessories'];
 
-type BoxComponentDraft = SerieComponent;
+type BoxComponentDraft = SerieComponent & {
+  isNew?: boolean;
+  newName?: string;
+  newCostPrice?: string;
+};
 
 type SeriesFormState = {
   name: string;
   boxBarcode: string;
   category: string;
   image: string;
+  costPrice: string;
   sellingPrice: string;
+  targetBoxes: string;
   supplierId: string;
 };
 
@@ -26,17 +34,18 @@ const emptyForm: SeriesFormState = {
   boxBarcode: '',
   category: 'Shoes',
   image: '',
+  costPrice: '',
   sellingPrice: '',
+  targetBoxes: '',
   supplierId: '',
 };
 
 function formatDz(amount: number) {
-  return `${amount.toFixed(2)} DZ`;
+  return `${amount.toFixed(2)} DZD`;
 }
 
-function makeInitialComponents(products: Product[]) {
-  const firstProduct = products[0];
-  return [{ productId: firstProduct?.id ?? '', quantity: 1, label: firstProduct?.name }];
+function makeInitialComponents(_products: Product[]): BoxComponentDraft[] {
+  return [{ productId: '', quantity: 1, label: '', isNew: false, newName: '', newCostPrice: '' }];
 }
 
 function cloneComponents(components: SerieComponent[]) {
@@ -95,13 +104,33 @@ export function SeriesView() {
       boxBarcode: serie.boxBarcode,
       category: serie.category,
       image: serie.image,
+      costPrice: serie.costPrice > 0 ? serie.costPrice.toString() : '',
       sellingPrice: serie.sellingPrice.toString(),
+      targetBoxes: getSerieBoxQuantity(serie).toString(),
       supplierId: serie.supplierId || '',
     });
 
-    const nextComponents = serie.components.length > 0
-      ? cloneComponents(serie.components)
-      : (serie.legacyItems?.map((item) => ({ productId: '', quantity: item.quantity, label: item.size })) ?? makeInitialComponents(products));
+    let nextComponents: BoxComponentDraft[];
+    if (serie.components.length > 0) {
+      // Map components — detect box-only products and load them in "new" mode
+      nextComponents = serie.components.map((comp) => {
+        const product = productMap.get(comp.productId);
+        if (product?.boxOnly) {
+          // Show as box-only editable row with details pre-filled
+          const qty = Math.max(1, Math.trunc(comp.quantity));
+          const boxes = product.stock > 0 ? Math.floor(product.stock / qty) : 0;
+          return {
+            ...comp,
+            isNew: true,
+            newName: product.name,
+            newCostPrice: (comp.unitCost ?? product.costPrice).toString(),
+          } as BoxComponentDraft;
+        }
+        return { ...comp } as BoxComponentDraft;
+      });
+    } else {
+      nextComponents = serie.legacyItems?.map((item) => ({ productId: '', quantity: item.quantity, label: item.size })) ?? makeInitialComponents(products);
+    }
 
     setComponents(nextComponents.length > 0 ? nextComponents : makeInitialComponents(products));
     setFormErrors({});
@@ -112,6 +141,13 @@ export function SeriesView() {
 
   const computedCostPrice = useMemo(() => {
     return components.reduce((sum, component) => {
+      if (component.unitCost != null && component.unitCost > 0) {
+        return sum + component.unitCost * Math.max(1, Math.trunc(component.quantity));
+      }
+      if (component.isNew && component.newCostPrice) {
+        const cost = parseFloat(component.newCostPrice);
+        return sum + (isNaN(cost) ? 0 : cost * Math.max(1, Math.trunc(component.quantity)));
+      }
       const product = productMap.get(component.productId);
       return sum + (product ? product.costPrice * Math.max(1, Math.trunc(component.quantity)) : 0);
     }, 0);
@@ -123,13 +159,29 @@ export function SeriesView() {
     if (!form.name.trim()) errors.name = 'Required';
     if (!form.boxBarcode.trim()) errors.boxBarcode = 'Required';
     if (!form.sellingPrice || Number.isNaN(Number(form.sellingPrice)) || Number(form.sellingPrice) <= 0) errors.sellingPrice = 'Invalid';
+    if (!form.targetBoxes || Number.isNaN(Number(form.targetBoxes)) || Number(form.targetBoxes) < 0) errors.targetBoxes = 'Invalid';
     if (components.length === 0) errors.components = 'Add at least one product';
 
-    if (components.some((component) => !component.productId)) {
-      errors.components = 'Select a product for each component';
+    for (const component of components) {
+      if (component.isNew) {
+        if (!component.newName?.trim()) {
+          errors.components = 'Enter a name for each new product';
+          break;
+        }
+        if (!component.newCostPrice || isNaN(Number(component.newCostPrice)) || Number(component.newCostPrice) <= 0) {
+          errors.components = 'Enter a valid unit cost price for each new product';
+          break;
+        }
+      } else {
+        if (!component.productId) {
+          errors.components = 'Select a product for each component';
+          break;
+        }
+      }
     }
 
-    const selectedProducts = components.map((component) => component.productId).filter(Boolean);
+    // Check for duplicate existing products (skip new ones)
+    const selectedProducts = components.filter((c) => !c.isNew).map((c) => c.productId).filter(Boolean);
     if (new Set(selectedProducts).size !== selectedProducts.length) {
       errors.components = 'Do not repeat the same product more than once';
     }
@@ -142,26 +194,96 @@ export function SeriesView() {
     return Object.keys(errors).length === 0;
   };
 
+  const [isSaving, setIsSaving] = useState(false);
+
   const handleSave = async () => {
     if (!validate()) return;
     setSaveError('');
-
-    const data = {
-      name: form.name.trim(),
-      boxBarcode: form.boxBarcode.trim(),
-      category: form.category,
-      image: form.image,
-      costPrice: computedCostPrice,
-      sellingPrice: parseFloat(form.sellingPrice),
-      supplierId: form.supplierId || undefined,
-      components: components.map((component) => ({
-        productId: component.productId,
-        quantity: Math.max(1, Math.trunc(Number(component.quantity)) || 1),
-        label: component.label,
-      })),
-    };
+    setIsSaving(true);
 
     try {
+      // First, create any new box-only products
+      const resolvedComponents: { productId: string; quantity: number; label?: string; unitCost?: number }[] = [];
+
+      const targetBoxes = Math.max(0, Math.trunc(Number(form.targetBoxes)) || 0);
+
+      for (const component of components) {
+        const qty = Math.max(1, Math.trunc(Number(component.quantity)) || 1);
+        const requiredStock = targetBoxes * qty;
+
+        if (component.isNew) {
+          const costPrice = parseFloat(component.newCostPrice || '0');
+
+          let productId: string;
+          let productName: string;
+
+          if (component.productId) {
+            // Existing box-only product — update it
+            const existingProduct = productMap.get(component.productId);
+            if (existingProduct) {
+              await updateProduct({
+                ...existingProduct,
+                name: component.newName?.trim() || existingProduct.name,
+                costPrice,
+                stock: requiredStock,
+              });
+            }
+            productId = component.productId;
+            productName = component.newName?.trim() || existingProduct?.name || 'Unnamed Product';
+          } else {
+            // Brand new box-only product — create it
+            const newProduct = await addProduct({
+              name: component.newName?.trim() || 'Unnamed Product',
+              price: 0,
+              costPrice,
+              category: form.category,
+              image: '',
+              barcode: generateBarcodeNumber(),
+              sku: `SKU-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`,
+              variants: '-',
+              stock: requiredStock,
+              boxOnly: true,
+            });
+            productId = newProduct.id;
+            productName = newProduct.name;
+          }
+
+          resolvedComponents.push({
+            productId,
+            quantity: qty,
+            label: productName,
+            unitCost: costPrice,
+          });
+        } else {
+          // Update stock for existing normal product to match requested boxes
+          const product = productMap.get(component.productId);
+          if (product && product.stock !== requiredStock) {
+            await updateProduct({ ...product, stock: requiredStock });
+          }
+
+          const effectiveCost = (component.unitCost != null && component.unitCost > 0)
+            ? component.unitCost
+            : product?.costPrice;
+          resolvedComponents.push({
+            productId: component.productId,
+            quantity: qty,
+            label: component.label,
+            unitCost: effectiveCost,
+          });
+        }
+      }
+
+      const data = {
+        name: form.name.trim(),
+        boxBarcode: form.boxBarcode.trim(),
+        category: form.category,
+        image: form.image,
+        costPrice: form.costPrice ? parseFloat(form.costPrice) : computedCostPrice,
+        sellingPrice: parseFloat(form.sellingPrice),
+        supplierId: form.supplierId || undefined,
+        components: resolvedComponents,
+      };
+
       if (editingSerie) {
         await updateSerie({ ...editingSerie, ...data, components: data.components, legacyItems: undefined });
       } else {
@@ -170,6 +292,8 @@ export function SeriesView() {
       setShowAddModal(false);
     } catch (error) {
       setSaveError(getErrorMessage(error));
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -184,13 +308,15 @@ export function SeriesView() {
   };
 
   const addComponent = () => {
-    const defaultProduct = products.find((product) => !components.some((component) => component.productId === product.id)) ?? products[0];
     setComponents((prev) => [
       ...prev,
       {
-        productId: defaultProduct?.id ?? '',
+        productId: '',
         quantity: 1,
-        label: defaultProduct?.name,
+        label: '',
+        isNew: false,
+        newName: '',
+        newCostPrice: '',
       },
     ]);
   };
@@ -261,7 +387,9 @@ export function SeriesView() {
               const componentSummary = serie.components.length > 0
                 ? serie.components.map((component) => {
                     const product = productMap.get(component.productId);
-                    return `${product?.name || component.label || component.productId} ×${component.quantity}`;
+                    const name = product?.name || component.label || component.productId;
+                    const badge = product?.boxOnly ? ' 📦' : '';
+                    return `${name}${badge} ×${component.quantity}`;
                   }).join(', ')
                 : 'Needs setup';
 
@@ -340,7 +468,7 @@ export function SeriesView() {
                   <div className="flex gap-2">
                     <input
                       value={form.boxBarcode}
-                      onChange={(event) => setForm((prev) => ({ ...prev, boxBarcode: event.target.value }))}
+                      onChange={(event) => setForm((prev) => ({ ...prev, boxBarcode: normalizeBarcodeScan(event.target.value) }))}
                       className={`flex-1 px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.boxBarcode ? 'border-red-400' : 'border-border'}`}
                       placeholder="Scan or type box barcode"
                     />
@@ -361,15 +489,22 @@ export function SeriesView() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">Cost Price</label>
+                  <label className="text-sm text-muted-foreground mb-1 block">Cost Price *</label>
                   <input
-                    value={formatDz(computedCostPrice)}
-                    readOnly
-                    className="w-full px-3 py-2.5 bg-muted/40 border border-border rounded-lg text-sm"
+                    value={form.costPrice}
+                    onChange={(event) => setForm((prev) => ({ ...prev, costPrice: event.target.value }))}
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.costPrice ? 'border-red-400' : 'border-border'}`}
+                    placeholder={computedCostPrice > 0 ? computedCostPrice.toFixed(2) : '0.00'}
                   />
-                  <p className="text-xs text-muted-foreground mt-1">Calculated from selected products</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {computedCostPrice > 0 ? `Auto-calculated: ${formatDz(computedCostPrice)}` : 'Currency: DZD'}
+                  </p>
+                  {formErrors.costPrice && <p className="text-red-500 text-xs mt-1">{formErrors.costPrice}</p>}
                 </div>
                 <div>
                   <label className="text-sm text-muted-foreground mb-1 block">Selling Price *</label>
@@ -382,8 +517,22 @@ export function SeriesView() {
                     className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.sellingPrice ? 'border-red-400' : 'border-border'}`}
                     placeholder="0.00"
                   />
-                  <p className="text-xs text-muted-foreground mt-1">Currency: DZ</p>
+                  <p className="text-xs text-muted-foreground mt-1">Currency: DZD</p>
                   {formErrors.sellingPrice && <p className="text-red-500 text-xs mt-1">{formErrors.sellingPrice}</p>}
+                </div>
+                <div>
+                  <label className="text-sm text-muted-foreground mb-1 block">Available Boxes *</label>
+                  <input
+                    value={form.targetBoxes}
+                    onChange={(event) => setForm((prev) => ({ ...prev, targetBoxes: event.target.value }))}
+                    type="number"
+                    min="0"
+                    step="1"
+                    className={`w-full px-3 py-2.5 bg-input-background border rounded-lg text-sm ${formErrors.targetBoxes ? 'border-red-400' : 'border-border'}`}
+                    placeholder="0"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Updates inventory automatically</p>
+                  {formErrors.targetBoxes && <p className="text-red-500 text-xs mt-1">{formErrors.targetBoxes}</p>}
                 </div>
               </div>
 
@@ -391,46 +540,147 @@ export function SeriesView() {
                 <div className="flex items-center justify-between mb-2">
                   <div>
                     <label className="text-sm text-muted-foreground block">Components *</label>
-                    <p className="text-xs text-muted-foreground">Select the inventory products included in one box.</p>
+                    <p className="text-xs text-muted-foreground">Pick existing products or add new box-only products.</p>
                   </div>
                   <button type="button" onClick={addComponent} className="px-3 py-2 bg-primary/10 text-primary border border-primary/30 rounded-lg hover:bg-primary/20 text-sm">
                     <Plus className="inline w-4 h-4 mr-1" /> Add Product
                   </button>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {components.map((component, index) => {
                     const product = productMap.get(component.productId);
+                    const isNewMode = !!component.isNew;
+                    const effectiveUnitCost = isNewMode
+                      ? parseFloat(component.newCostPrice || '0') || 0
+                      : (component.unitCost != null && component.unitCost > 0)
+                        ? component.unitCost
+                        : product?.costPrice ?? 0;
+
                     return (
-                      <div key={`${index}-${component.productId || 'empty'}`} className="grid grid-cols-[1fr_120px_auto] gap-2 items-center rounded-lg border border-border bg-muted/20 p-3">
-                        <div>
-                          <ProductPicker
-                            products={products}
-                            selectedProductId={component.productId}
-                            onSelect={(product) => {
-                              updateComponent(index, { productId: product.id, label: product.name });
-                            }}
-                          />
-                          {component.label && !component.productId && <p className="mt-1 text-xs text-muted-foreground">Legacy label: {component.label}</p>}
+                      <div key={`${index}-${component.productId || 'new'}`} className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
+                        {/* Toggle: Existing vs New */}
+                        <div className="flex items-center gap-3">
+                          <div className="flex bg-muted rounded-lg p-0.5 text-sm">
+                            <button
+                              type="button"
+                              onClick={() => updateComponent(index, { isNew: false, newName: '', newCostPrice: '' })}
+                              className={`px-3 py-1.5 rounded-md transition-colors ${!isNewMode ? 'bg-card shadow-sm text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                            >
+                              Existing Product
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateComponent(index, { isNew: true, productId: '', label: '' })}
+                              className={`px-3 py-1.5 rounded-md transition-colors ${isNewMode ? 'bg-primary text-primary-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                            >
+                              New Box-Only Product
+                            </button>
+                          </div>
+                          <div className="flex-1" />
+                          <button type="button" onClick={() => removeComponent(index)} className="text-muted-foreground hover:text-red-500 px-2">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
-                        <div>
-                          <input
-                            value={component.quantity}
-                            onChange={(event) => updateComponent(index, { quantity: Math.max(1, Math.trunc(Number(event.target.value)) || 1) })}
-                            type="number"
-                            min="1"
-                            step="1"
-                            className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-center"
-                            placeholder="Qty"
-                          />
-                        </div>
-                        <button type="button" onClick={() => removeComponent(index)} className="text-muted-foreground hover:text-red-500 px-2">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                        <div className="col-span-3 text-xs text-muted-foreground flex flex-wrap gap-3 pl-1">
-                          <span>{product ? `Stock: ${product.stock}` : 'No product selected'}</span>
-                          <span>{product ? `Max boxes: ${Math.floor(product.stock / Math.max(1, Math.trunc(component.quantity)))}` : 'Max boxes: 0'}</span>
-                        </div>
+
+                        {isNewMode ? (
+                          /* New box-only product fields */
+                          <div className="grid grid-cols-[1fr_120px_100px] gap-2 items-start">
+                            <div>
+                              <label className="text-xs text-muted-foreground mb-1 block">Product Name *</label>
+                              <input
+                                value={component.newName || ''}
+                                onChange={(event) => updateComponent(index, { newName: event.target.value })}
+                                className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm"
+                                placeholder="e.g. Size 42 Black"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground mb-1 block">Unit Cost *</label>
+                              <input
+                                value={component.newCostPrice || ''}
+                                onChange={(event) => updateComponent(index, { newCostPrice: event.target.value })}
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-center"
+                                placeholder="0.00"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground mb-1 block">Qty</label>
+                              <input
+                                value={component.quantity}
+                                onChange={(event) => updateComponent(index, { quantity: Math.max(1, Math.trunc(Number(event.target.value)) || 1) })}
+                                type="number"
+                                min="1"
+                                step="1"
+                                className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-center"
+                                placeholder="Qty"
+                              />
+                            </div>
+                            <div className="col-span-3 text-xs text-muted-foreground pl-1">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-medium">
+                                📦 Will be created as box-only product
+                              </span>
+                              {effectiveUnitCost > 0 && (
+                                <span className="ml-2">Line cost: {formatDz(effectiveUnitCost * Math.max(1, Math.trunc(component.quantity)))}</span>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          /* Existing product fields */
+                          <div className="grid grid-cols-[1fr_120px_100px] gap-2 items-start">
+                            <div>
+                              <label className="text-xs text-muted-foreground mb-1 block">Product</label>
+                              <ProductPicker
+                                products={products}
+                                selectedProductId={component.productId}
+                                onSelect={(selectedProduct) => {
+                                  updateComponent(index, {
+                                    productId: selectedProduct.id,
+                                    label: selectedProduct.name,
+                                    unitCost: selectedProduct.costPrice,
+                                  });
+                                }}
+                              />
+                              {component.label && !component.productId && <p className="mt-1 text-xs text-muted-foreground">Legacy label: {component.label}</p>}
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground mb-1 block">Unit Cost</label>
+                              <input
+                                value={component.unitCost != null && component.unitCost > 0 ? component.unitCost : product?.costPrice ?? ''}
+                                onChange={(event) => {
+                                  const val = parseFloat(event.target.value);
+                                  updateComponent(index, { unitCost: isNaN(val) ? 0 : val });
+                                }}
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-center"
+                                placeholder="0.00"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground mb-1 block">Qty</label>
+                              <input
+                                value={component.quantity}
+                                onChange={(event) => updateComponent(index, { quantity: Math.max(1, Math.trunc(Number(event.target.value)) || 1) })}
+                                type="number"
+                                min="1"
+                                step="1"
+                                className="w-full px-3 py-2 bg-input-background border border-border rounded-lg text-sm text-center"
+                                placeholder="Qty"
+                              />
+                            </div>
+                            <div className="col-span-3 text-xs text-muted-foreground flex flex-wrap gap-3 pl-1">
+                              <span>{product ? `Stock: ${product.stock}` : 'No product selected'}</span>
+                              {effectiveUnitCost > 0 && (
+                                <span>Line cost: {formatDz(effectiveUnitCost * Math.max(1, Math.trunc(component.quantity)))}</span>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -481,9 +731,9 @@ export function SeriesView() {
             {saveError && <div className="mx-5 mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{saveError}</div>}
 
             <div className="flex gap-3 p-5 border-t border-border">
-              <button onClick={() => setShowAddModal(false)} className="flex-1 py-2.5 border border-border rounded-lg hover:bg-muted transition-colors">Cancel</button>
-              <button onClick={() => void handleSave()} className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors">
-                {editingSerie ? 'Save Changes' : 'Add Box'}
+              <button onClick={() => setShowAddModal(false)} disabled={isSaving} className="flex-1 py-2.5 border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50">Cancel</button>
+              <button onClick={() => void handleSave()} disabled={isSaving} className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50">
+                {isSaving ? 'Saving...' : editingSerie ? 'Save Changes' : 'Add Box'}
               </button>
             </div>
           </div>
@@ -547,7 +797,14 @@ export function SeriesView() {
                     return (
                       <div key={`${component.productId}-${index}`} className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm">
                         <div>
-                          <div className="font-medium">{product?.name || component.label || component.productId}</div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{product?.name || component.label || component.productId}</span>
+                            {product?.boxOnly && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-primary/10 text-primary border border-primary/20">
+                                📦 Box Only
+                              </span>
+                            )}
+                          </div>
                           <div className="text-xs text-muted-foreground">{product?.sku || component.label || 'Inventory product'}</div>
                         </div>
                         <div className="text-muted-foreground">×{component.quantity}</div>

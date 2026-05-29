@@ -32,7 +32,7 @@ const emptyPurchaseForm = {
 
 function formatCurrency(amount: number, currencyCode: string) {
   const code = (currencyCode || 'DZD').toUpperCase();
-  const suffix = code === 'DZD' ? 'DZ' : code;
+  const suffix = code === 'DZD' ? 'DZD' : code;
   return `${new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,

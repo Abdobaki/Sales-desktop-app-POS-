@@ -18,7 +18,7 @@ function cloneComponents(components: SerieComponent[]) {
 }
 
 function formatDz(amount: number) {
-  return `${amount.toFixed(2)} DZ`;
+  return `${amount.toFixed(2)} DZD`;
 }
 
 export function BoxSaleModal({ serie, products, onConfirm, onClose }: BoxSaleModalProps) {

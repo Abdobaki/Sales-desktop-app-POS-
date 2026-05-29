@@ -147,7 +147,7 @@ export function CustomersView() {
               </div>
               <div>
                 <div className="text-sm text-muted-foreground mb-1">Total Spent</div>
-                <div>${customer.totalSpent.toFixed(2)}</div>
+                <div>{customer.totalSpent.toFixed(2)} DZD</div>
               </div>
               <div>
                 <div className="text-sm text-muted-foreground mb-1">Last Purchase</div>

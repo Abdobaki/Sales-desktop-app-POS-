@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { POSView } from './components/POSView';
-import { ScannerView } from './components/ScannerView';
 import { InventoryView } from './components/InventoryView';
 import { SeriesView } from './components/SeriesView';
 import { CustomersView } from './components/CustomersView';
@@ -18,8 +17,6 @@ export default function App() {
     switch (activeView) {
       case 'pos':
         return <POSView />;
-      case 'scanner':
-        return <ScannerView />;
       case 'inventory':
         return <InventoryView />;
       case 'series':

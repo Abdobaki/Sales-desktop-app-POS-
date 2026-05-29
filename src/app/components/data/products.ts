@@ -12,6 +12,7 @@ export type Product = {
   variants: string;
   stock: number;
   supplierId?: string;
+  boxOnly?: boolean;
 };
 
 let _products: Product[] = [];
@@ -44,6 +45,7 @@ function parseProductRow(row: Record<string, unknown>): Product {
     variants: String(row.variants ?? '-'),
     stock: Number(row.stock_qty ?? 0),
     supplierId: row.supplier_id ? String(row.supplier_id) : undefined,
+    boxOnly: row.box_only === 1 || row.box_only === true || row.boxOnly === true || false,
   };
 }
 
@@ -60,6 +62,7 @@ function toCreatePayload(product: Omit<Product, 'id'>) {
     stock_qty: Math.max(0, Math.floor(product.stock)),
     supplier_id: product.supplierId || null,
     is_active: 1,
+    box_only: product.boxOnly ? 1 : 0,
   };
 }
 

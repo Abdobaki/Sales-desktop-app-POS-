@@ -5,6 +5,7 @@ export type SerieComponent = {
   productId: string;
   quantity: number;
   label?: string;
+  unitCost?: number;
 };
 
 export type SerieLegacyItem = {
@@ -87,10 +88,12 @@ function normalizeSerieRow(row: Record<string, unknown>, products: Product[]): S
     const productId = explicitProductId || resolvedProduct?.id || fallbackProductId || '';
 
     if (productId) {
+      const rawUnitCost = Number(item.unitCost ?? item.unit_cost ?? NaN);
       components.push({
         productId,
         quantity,
         label: label || resolvedProduct?.name || resolvedProduct?.sku || undefined,
+        unitCost: Number.isFinite(rawUnitCost) && rawUnitCost > 0 ? rawUnitCost : undefined,
       });
       continue;
     }

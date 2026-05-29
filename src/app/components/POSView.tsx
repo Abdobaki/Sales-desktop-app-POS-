@@ -4,7 +4,7 @@ import { getProducts, subscribeProducts, type Product } from './data/products';
 import { getSeries, findSerieByBoxBarcode, refreshSeries, subscribeSeries, getSerieBoxQuantity, type Serie, type SerieComponent } from './data/series';
 import { type Customer } from './data/customers';
 import { checkoutSale } from './data/sales';
-import { getErrorMessage } from './data/shared';
+import { getErrorMessage, normalizeBarcodeScan } from './data/shared';
 import { CustomerPicker } from './CustomerPicker';
 import { BoxSaleModal } from './BoxSaleModal';
 import { ItemImage } from './ItemImagePlaceholder';
@@ -16,7 +16,7 @@ type CartItem = (Product & { quantity: number; type: 'product' }) |
 const categories = ['All', 'Shirts', 'Pants', 'Accessories'];
 
 function formatDz(amount: number) {
-  return `${amount.toFixed(2)} DZ`;
+  return `${amount.toFixed(2)} DZD`;
 }
 
 export function POSView() {
@@ -151,6 +151,8 @@ export function POSView() {
   };
 
   const filteredProducts = products.filter((product) => {
+    if (product.boxOnly) return false;
+    if (product.stock <= 0) return false;
     const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       product.barcode.includes(searchQuery) || product.sku.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategory === 'All' || product.category === selectedCategory;
@@ -267,7 +269,7 @@ export function POSView() {
 
   const handleBarcodeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const code = barcodeInput.trim();
+    const code = normalizeBarcodeScan(barcodeInput.trim());
     if (!code) return;
 
     const serieByBox = findSerieByBoxBarcode(code);
@@ -416,6 +418,22 @@ export function POSView() {
                   <ItemImage src={item.image} alt={item.name} category={item.category} className={`w-16 h-16 rounded-lg flex-shrink-0 border border-slate-200 ${item.type === 'serie' ? 'ring-2 ring-primary/30' : 'bg-slate-100'}`} iconClassName="w-6 h-6" />
                   <div className="flex-1 min-w-0">
                     <div className="mb-1 text-sm">{item.name}</div>
+                    
+                    {item.type === 'product' && (
+                      <div className="mb-1 text-[11px] text-muted-foreground/70">
+                        Stock available: {products.find(p => p.id === item.id)?.stock ?? 0}
+                      </div>
+                    )}
+                    
+                    {item.type === 'serie' && (
+                      <div className="mb-1 text-[11px] text-muted-foreground/70">
+                        Boxes available: {(() => {
+                          const s = series.find(s => s.id === item.serieId);
+                          return s ? getSerieBoxQuantity(s) : 0;
+                        })()}
+                      </div>
+                    )}
+
                     {item.type === 'serie' && item.components.length > 0 && (
                       <div className="mb-1 text-xs text-muted-foreground truncate">
                         {item.components.map((component) => {

@@ -229,7 +229,7 @@ function formatCurrency(value: number, currencyCode: string) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
-  const suffix = (currencyCode || 'DZD').toUpperCase() === 'DZD' ? 'DZ' : (currencyCode || 'DZD').toUpperCase();
+  const suffix = (currencyCode || 'DZD').toUpperCase() === 'DZD' ? 'DZD' : (currencyCode || 'DZD').toUpperCase();
   return `${amount} ${suffix}`;
 }
 
