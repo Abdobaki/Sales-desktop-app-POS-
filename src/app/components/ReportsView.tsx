@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, TrendingDown, ShoppingBag, AlertCircle, Calendar, Download, FileText, RefreshCw, Package, BarChart3 } from 'lucide-react';
+import { TrendingUp, TrendingDown, ShoppingBag, Calendar, Download, FileText, RefreshCw, Package, BarChart3 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
   LineChart, Line, Area, AreaChart,
 } from 'recharts';
 import { getDbApi, getErrorMessage } from './data/shared';
+import { getPurchases, subscribePurchases } from './data/suppliers';
 import { getStoreSettings, subscribeSettings, type StoreSettings } from './data/settings';
 
 type SalesOrderRow = {
@@ -89,11 +90,11 @@ type ReportSnapshot = {
   totalProfit: number;
   totalOrders: number;
   totalItems: number;
-  lowStockCount: number;
+  totalMoneySpent: number;
   revenueChange: string;
   ordersChange: string;
   profitChange: string;
-  lowStockChange: string;
+  totalSpentChange: string;
   recentTransactions: RecentTransaction[];
   topProducts: TopProduct[];
   currencyCode: string;
@@ -274,7 +275,12 @@ function buildSnapshot(source: ReportSource, fromStr: string, toStr: string, set
     return sum + Math.max(0, item.line_total_cents - cost);
   }, 0);
 
-  const lowStockCount = source.products.filter((product) => product.is_active !== 0 && Math.trunc(product.stock_qty) <= settings.lowStockThreshold).length;
+  const allPurchases = getPurchases();
+  const selectedPurchases = allPurchases.filter((p) => {
+    const d = p.date;
+    return d >= fromStr && d <= toStr;
+  });
+  const totalMoneySpent = selectedPurchases.reduce((sum, p) => sum + p.totalPrice, 0);
 
   const dailyMap = new Map<string, DailyPoint>();
   const rangeLength = daysBetween(fromStr, toStr);
@@ -353,6 +359,8 @@ function buildSnapshot(source: ReportSource, fromStr: string, toStr: string, set
   const previousItems = source.items.filter((item) => previousOrderIds.has(item.sales_order_id));
   const previousRevenue = previousOrders.reduce((sum, order) => sum + order.total_cents / 100, 0);
   const previousProfit = previousItems.reduce((sum, item) => sum + Math.max(0, (item.line_total_cents - (item.unit_cost_cents ?? 0) * item.quantity) / 100), 0);
+  const previousPurchases = allPurchases.filter((p) => p.date >= prevFrom && p.date <= prevTo);
+  const previousSpent = previousPurchases.reduce((sum, p) => sum + p.totalPrice, 0);
 
   return {
     from: fromStr,
@@ -362,11 +370,11 @@ function buildSnapshot(source: ReportSource, fromStr: string, toStr: string, set
     totalProfit: totalProfitCents / 100,
     totalOrders,
     totalItems,
-    lowStockCount,
+    totalMoneySpent,
     revenueChange: formatPercentChange(totalRevenueCents / 100, previousRevenue),
     ordersChange: formatPercentChange(totalOrders, previousOrders.length),
     profitChange: formatPercentChange(totalProfitCents / 100, previousProfit),
-    lowStockChange: `Threshold ${settings.lowStockThreshold}`,
+    totalSpentChange: formatPercentChange(totalMoneySpent, previousSpent),
     recentTransactions,
     topProducts,
     currencyCode: settings.currencyCode || 'DZD',
@@ -385,11 +393,16 @@ export function ReportsView() {
   const [settings, setSettings] = useState<StoreSettings>(getStoreSettings());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [purchaseVersion, setPurchaseVersion] = useState(0);
 
   useEffect(() => {
-    return subscribeSettings(() => {
+    const unsubSettings = subscribeSettings(() => {
       setSettings(getStoreSettings());
     });
+    const unsubPurchases = subscribePurchases(() => {
+      setPurchaseVersion((v) => v + 1);
+    });
+    return () => { unsubSettings(); unsubPurchases(); };
   }, []);
 
   useEffect(() => {
@@ -445,7 +458,8 @@ export function ReportsView() {
   const currentReport = useMemo(() => {
     if (!reportSource) return null;
     return buildSnapshot(reportSource, currentRange.from, currentRange.to, settings);
-  }, [reportSource, currentRange.from, currentRange.to, settings]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportSource, currentRange.from, currentRange.to, settings, purchaseVersion]);
 
   const exportReport = (report: ReportSnapshot) => {
     const lines = [
@@ -565,11 +579,11 @@ export function ReportsView() {
           trend={activeReport.profitChange.startsWith('-') ? 'down' : 'up'}
         />
         <SummaryCard
-          title="Items Low on Stock"
-          value={`${activeReport.lowStockCount}`}
-          change={activeReport.lowStockChange}
-          icon={AlertCircle}
-          trend={activeReport.lowStockCount > 0 ? 'down' : 'up'}
+          title="Total Money Spent"
+          value={formatCurrency(activeReport.totalMoneySpent, activeReport.currencyCode)}
+          change={`${activeReport.totalSpentChange} vs prev period`}
+          icon={Package}
+          trend={activeReport.totalSpentChange.startsWith('-') ? 'down' : 'up'}
         />
       </div>
 

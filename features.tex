@@ -1,0 +1,394 @@
+\documentclass[12pt,a4paper]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{parskip}
+
+% ── Colours & hyperlink style ─────────────────────────────────────────────────
+\definecolor{primary}{HTML}{0E7490}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=primary,
+  urlcolor=primary,
+}
+
+% ── Section formatting ────────────────────────────────────────────────────────
+\titleformat{\section}{\Large\bfseries\color{primary}}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\large\bfseries}{}{0em}{}
+
+% ── Document ──────────────────────────────────────────────────────────────────
+\begin{document}
+
+% ── Title page ────────────────────────────────────────────────────────────────
+\begin{titlepage}
+  \centering
+  \vspace*{3cm}
+  {\Huge\bfseries Sales Desktop Application\\[0.3em] Point-of-Sale (POS) System\par}
+  \vspace{1.5cm}
+  {\Large Feature Overview\par}
+  \vspace{2cm}
+  {\large
+    Built with React, Electron, SQLite, Tailwind CSS \& Vite\\[0.6em]
+    Cross-platform Desktop Application
+  \par}
+  \vfill
+  {\large \today\par}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Introduction}
+% ══════════════════════════════════════════════════════════════════════════════
+
+This document describes the feature set of the \textbf{Sales Desktop App -- POS},
+a full-featured point-of-sale system designed for retail stores (particularly
+clothing and fashion boutiques). The application is built as an
+\textbf{Electron} desktop app with a modern \textbf{React + TypeScript}
+front-end, backed by a local \textbf{SQLite} database for persistent storage.
+
+\subsection{Technology Stack}
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Front-end:} React 18, TypeScript, Tailwind CSS v4, Radix UI, Lucide icons, Recharts
+  \item \textbf{Desktop shell:} Electron (with context-isolated preload bridge)
+  \item \textbf{Database:} SQLite via \texttt{better-sqlite3} (local, file-based)
+  \item \textbf{Build tooling:} Vite 6, \texttt{@tailwindcss/vite}
+  \item \textbf{Barcode support:} JsBarcode for generation and rendering
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Point-of-Sale (POS) Terminal}
+% ══════════════════════════════════════════════════════════════════════════════
+
+The POS view is the primary sales interface, offering a visual product grid
+alongside a live shopping cart.
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Product grid} -- Browse products by category (Shirts, Pants,
+        Accessories) with thumbnail images, names, and prices.
+  \item \textbf{Search} -- Real-time text search to filter products by name.
+  \item \textbf{Barcode input} -- Manual barcode/SKU entry field to quickly add
+        items (supports both individual products and box barcodes).
+  \item \textbf{Shopping cart} -- Add, remove, and adjust quantities of items.
+        Inline editing of unit prices and quantities directly in the cart.
+  \item \textbf{Box (Serie) sales} -- Sell pre-configured product bundles
+        (boxes) with a dedicated configuration modal that lets the user
+        customise box components and quantities.
+  \item \textbf{Customer assignment} -- Optionally assign a customer to the
+        sale via the Customer Picker modal; supports walk-in customers.
+  \item \textbf{Partial payments \& debts} -- Accept partial payments and
+        automatically create a debt record for the remaining balance.
+  \item \textbf{Checkout} -- Complete the sale, persist the order to the
+        database, deduct stock, and generate a receipt.
+  \item \textbf{Receipt generation \& printing} -- On-screen receipt preview
+        with a one-click print function that opens a formatted receipt in a
+        new window.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Barcode Scanner Terminal}
+% ══════════════════════════════════════════════════════════════════════════════
+
+A dedicated scanning-focused sales interface optimised for hardware barcode
+scanners.
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Auto-focus scan field} -- The barcode input field is
+        automatically focused for immediate scanning.
+  \item \textbf{Product lookup} -- Scanned barcodes are matched against
+        products and boxes; unrecognised codes display an error.
+  \item \textbf{Scan log} -- A chronological history of recent scans
+        (success/failure) with timestamps.
+  \item \textbf{Quick reference panel} -- Shows all available products and
+        boxes with their barcodes for quick manual selection.
+  \item \textbf{Cart \& checkout} -- Same cart and checkout flow as the POS
+        terminal, including customer assignment, inline price editing, and
+        receipt printing.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Inventory Management}
+% ══════════════════════════════════════════════════════════════════════════════
+
+Full CRUD management for the product catalogue.
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Product table} -- Sortable, searchable table showing name,
+        SKU, barcode, category, cost price, selling price, stock level,
+        variants, supplier, and image.
+  \item \textbf{Category filtering} -- Filter products by category (All,
+        Shirts, Pants, Accessories).
+  \item \textbf{Add / Edit products} -- Modal form with fields for name,
+        category, SKU (auto-generated if empty), barcode, buying price,
+        selling price, stock quantity, supplier, size/colour variants, and
+        product image upload.
+  \item \textbf{Profit calculator} -- Real-time profit-per-unit display
+        (absolute and percentage) when both cost and selling prices are entered.
+  \item \textbf{Barcode generation} -- Built-in barcode generator modal that
+        creates EAN-13 / Code-128 barcodes and renders them visually.
+  \item \textbf{Barcode display} -- View and print the barcode for any
+        existing product directly from the table.
+  \item \textbf{Delete confirmation} -- Safe deletion with a confirmation
+        dialog.
+  \item \textbf{Supplier linking} -- Associate each product with a supplier
+        via a searchable dropdown.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Boxes (Series) Management}
+% ══════════════════════════════════════════════════════════════════════════════
+
+Boxes (also called series) are product bundles composed of multiple inventory
+products.
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Box table} -- Overview of all boxes with image, name, box
+        barcode, category, component summary, available quantity, cost price,
+        and selling price.
+  \item \textbf{Add / Edit boxes} -- Modal form to define the box name,
+        barcode, category, selling price, image, and supplier.
+  \item \textbf{Component builder} -- Dynamically add, remove, and configure
+        box components (products and quantities) using a product picker.
+  \item \textbf{Computed cost price} -- The box cost price is automatically
+        calculated from the sum of its component costs.
+  \item \textbf{Availability calculation} -- The number of available boxes is
+        computed from the minimum stock across all component products.
+  \item \textbf{Box barcode generation} -- Generate and display barcodes
+        specifically for boxes.
+  \item \textbf{Detail view} -- Click a box row to open a detail panel with
+        full component breakdown.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Customer Management}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Customer directory} -- Card-based list of customers with name,
+        email, and phone number.
+  \item \textbf{Search} -- Filter customers by name or email.
+  \item \textbf{Add customer} -- Modal form to create new customers (name,
+        phone, email).
+  \item \textbf{Edit customer} -- Inline editing of customer details.
+  \item \textbf{Delete customer} -- Safe deletion with confirmation.
+  \item \textbf{Customer picker} -- Reusable modal component used in POS and
+        Scanner views to assign customers to sales or create new ones on the
+        fly.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Supplier Management}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Supplier directory} -- List of suppliers with name, company,
+        phone, email, and address.
+  \item \textbf{Search} -- Filter suppliers by name, company, or email.
+  \item \textbf{Add / Edit / Delete suppliers} -- Full CRUD operations via
+        modal forms.
+  \item \textbf{Supplier detail view} -- Expandable panel showing all purchase
+        orders associated with a supplier.
+  \item \textbf{Purchase order management:}
+    \begin{itemize}
+      \item Record purchases from suppliers (product, quantity, unit cost,
+            date, notes).
+      \item Upload and view purchase receipt images.
+      \item Edit and delete purchase records.
+      \item Purchases automatically adjust product stock levels.
+    \end{itemize}
+  \item \textbf{Currency-aware display} -- All monetary values respect the
+        store's configured currency.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Analytics \& Reports}
+% ══════════════════════════════════════════════════════════════════════════════
+
+A comprehensive analytics dashboard for tracking store performance.
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Summary cards} -- At-a-glance KPIs:
+    \begin{itemize}
+      \item Period revenue (with percentage change vs.\ previous period)
+      \item Total orders (with percentage change)
+      \item Gross profit (with percentage change)
+      \item Items low on stock (based on configurable threshold)
+    \end{itemize}
+  \item \textbf{Sales trend chart} -- Area chart showing daily revenue over the
+        selected period.
+  \item \textbf{Profit trend chart} -- Area chart showing daily gross profit.
+  \item \textbf{Daily revenue bar chart} -- Bar chart of the last 14~days of
+        revenue.
+  \item \textbf{Recent transactions} -- List of the latest 6~sales with
+        customer, amount, time, and item count.
+  \item \textbf{Top products} -- Ranked list of the top~5 products by revenue,
+        with quantity sold and profit.
+  \item \textbf{Date range selector} -- Preset ranges (Today, 7~days,
+        30~days, 90~days) and a custom date-range picker.
+  \item \textbf{Custom report generation} -- Generate a detailed report for
+        any custom date range with its own summary cards and line chart.
+  \item \textbf{CSV export} -- Export any report to a CSV file with date,
+        revenue, profit, orders, and items columns.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Operation History}
+% ══════════════════════════════════════════════════════════════════════════════
+
+A full audit log of all sales and purchase operations.
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{History table} -- Tabular view of all operations showing date,
+        type (sale/purchase), product, quantity, unit price, total, and
+        associated entity (customer or supplier).
+  \item \textbf{Search} -- Search by product name, customer/supplier name, or
+        receipt number.
+  \item \textbf{Type filter} -- Toggle between All, Sales only, or Purchases
+        only.
+  \item \textbf{Edit operation} -- Modal to update quantity, price, cost,
+        product, date, and notes; stock adjustments are automatically reversed
+        and re-applied.
+  \item \textbf{Delete operation} -- Safe deletion with stock reversal and
+        confirmation dialog.
+  \item \textbf{Receipt number tracking} -- Each sale is associated with a
+        unique receipt number.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Debt Management}
+% ══════════════════════════════════════════════════════════════════════════════
+
+Track and manage customer debts created from partial payments.
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Debt list} -- Table of all debts with customer name, phone,
+        receipt number, total amount, paid amount, remaining balance, and
+        status.
+  \item \textbf{Status tracking} -- Three statuses with colour-coded badges:
+    \begin{itemize}
+      \item \textcolor{red}{\textbf{Unpaid}} -- No payment received
+      \item \textcolor{orange}{\textbf{Partial}} -- Some payment received
+      \item \textcolor{green!60!black}{\textbf{Paid}} -- Fully settled
+    \end{itemize}
+  \item \textbf{Status filtering} -- Filter debts by status (All, Unpaid,
+        Partial, Paid).
+  \item \textbf{Search} -- Search by customer name, phone, or receipt number.
+  \item \textbf{Record payment} -- Modal to record a payment against a debt
+        (any amount up to the remaining balance).
+  \item \textbf{Outstanding totals} -- Summary showing total outstanding
+        amount and number of unpaid debts.
+  \item \textbf{Delete debt} -- Remove debt records with confirmation.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Settings}
+% ══════════════════════════════════════════════════════════════════════════════
+
+Centralised configuration for the entire application.
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Store information:}
+    \begin{itemize}
+      \item Store name, email, phone, address
+      \item Low stock threshold (configurable integer)
+      \item Currency code (e.g.\ DZD, USD, EUR)
+    \end{itemize}
+  \item \textbf{Payment methods:}
+    \begin{itemize}
+      \item Toggle accepted payment methods (Credit Card, Debit Card, Cash,
+            Digital Wallet)
+    \end{itemize}
+  \item \textbf{Notification preferences:}
+    \begin{itemize}
+      \item Low stock alerts
+      \item Daily sales summary
+      \item New customer sign-up notifications
+    \end{itemize}
+  \item \textbf{Security:}
+    \begin{itemize}
+      \item Change password (placeholder UI)
+    \end{itemize}
+  \item \textbf{Persistence} -- All settings are persisted to the SQLite
+        database and take effect immediately across the application.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Desktop Application \& Architecture}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Electron shell} -- Runs as a native desktop application on
+        Windows, macOS, and Linux.
+  \item \textbf{Context isolation} -- Secure IPC bridge via a preload script
+        (\texttt{electron/preload.js}) exposing \texttt{window.electronAPI}.
+  \item \textbf{Local SQLite database} -- Data is stored in
+        \texttt{\{userData\}/pos.sqlite3}; no internet connection required.
+  \item \textbf{Schema migrations} -- Versioned migration system
+        (currently 6~versions) that automatically upgrades the database schema
+        on startup.
+  \item \textbf{CRUD IPC handlers} -- Generic database handlers for all
+        entities (products, customers, suppliers, sales orders, debts, etc.).
+  \item \textbf{Reactive data layer} -- Pub/sub subscriber pattern in the
+        renderer; UI components subscribe to data stores and update
+        automatically on changes.
+  \item \textbf{Offline-first} -- The entire application works fully offline
+        with all data stored locally.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{User Interface}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Sidebar navigation} -- Icon-based sidebar with 10~views (POS,
+        Scanner, Inventory, Boxes, Customers, Suppliers, Reports, History,
+        Debts, Settings).
+  \item \textbf{Modern design system} -- Tailwind CSS v4 with a consistent
+        colour palette, rounded corners, shadows, and smooth transitions.
+  \item \textbf{Responsive modals} -- All create/edit/delete operations use
+        accessible modal dialogs.
+  \item \textbf{Inline editing} -- Prices and quantities can be edited
+        directly in-place in tables and carts.
+  \item \textbf{Category-aware placeholders} -- Product images show
+        category-specific placeholder icons when no image is uploaded.
+  \item \textbf{Error handling} -- User-friendly inline error messages on all
+        forms and operations.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Summary}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{} l l @{}}
+\toprule
+\textbf{Module}           & \textbf{Key Capabilities} \\
+\midrule
+POS Terminal              & Product grid, cart, checkout, receipts, partial payments \\
+Scanner Terminal           & Barcode scanning, scan log, quick checkout \\
+Inventory                 & Product CRUD, barcode generation, stock tracking \\
+Boxes (Series)            & Bundle management, component builder, availability \\
+Customers                 & Directory, CRUD, picker integration \\
+Suppliers                 & Directory, CRUD, purchase order tracking \\
+Analytics                 & KPI cards, charts, custom reports, CSV export \\
+History                   & Operation log, editable records, stock reversal \\
+Debts                     & Debt tracking, partial payments, status management \\
+Settings                  & Store info, payments, notifications, security \\
+\bottomrule
+\end{tabular}
+\caption{Feature summary by module.}
+\end{table}
+
+\end{document}

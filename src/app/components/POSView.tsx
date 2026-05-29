@@ -32,6 +32,9 @@ export function POSView() {
     date: string;
     id: string;
     customer: Customer | null;
+    isPartialPayment?: boolean;
+    paidAmount?: number;
+    remainingDebt?: number;
   } | null>(null);
   const [barcodeInput, setBarcodeInput] = useState('');
   const [barcodeError, setBarcodeError] = useState('');
@@ -189,6 +192,9 @@ export function POSView() {
         date: new Date(result.soldAt).toLocaleString(),
         id: result.receiptNumber,
         customer: selectedCustomer,
+        isPartialPayment: !!result.debtId,
+        paidAmount: result.paidAmountCents / 100,
+        remainingDebt: result.remainingCents / 100,
       });
       setCart([]);
       setSelectedCustomer(null);
@@ -216,6 +222,14 @@ export function POSView() {
     const customerLine = receipt.customer
       ? `<div class="row"><span>Customer: ${receipt.customer.name}</span></div>`
       : '';
+    const partialPaymentBlock = receipt.isPartialPayment
+      ? `
+        <div class="line"></div>
+        <div style="font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Partially Paid</div>
+        <div class="row"><span>Amount Paid</span><span>${formatDz(receipt.paidAmount ?? 0)}</span></div>
+        <div class="row"><span>Remaining Debt</span><span>${formatDz(receipt.remainingDebt ?? 0)}</span></div>
+      `
+      : '';
     printWindow.document.write(`
       <html><head><title>Receipt</title>
       <style>
@@ -242,6 +256,7 @@ export function POSView() {
         `).join('')}
         <div class="line"></div>
         <div class="row bold" style="font-size:15px"><span>TOTAL</span><span>${formatDz(receipt.total)}</span></div>
+        ${partialPaymentBlock}
         <div class="line"></div>
         <div class="center"><p style="margin-top:12px">Thank you for shopping!</p><p>Have a great day</p></div>
       </body></html>
@@ -569,6 +584,22 @@ export function POSView() {
               </div>
               <div className="border-t border-dashed border-gray-300 my-3" />
               <div className="flex justify-between"><span>TOTAL</span><span>{formatDz(receipt.total)}</span></div>
+              {receipt.isPartialPayment && (
+                <>
+                  <div className="border-t border-dashed border-gray-300 my-3" />
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold uppercase tracking-wide">Partially Paid</div>
+                    <div className="flex justify-between text-sm">
+                      <span>Amount Paid</span>
+                      <span className="font-medium">{formatDz(receipt.paidAmount ?? 0)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span>Remaining Debt</span>
+                      <span className="font-medium">{formatDz(receipt.remainingDebt ?? 0)}</span>
+                    </div>
+                  </div>
+                </>
+              )}
               <div className="text-center text-sm text-muted-foreground mt-4">Thank you for shopping!</div>
             </div>
             <div className="flex gap-3 p-4 border-t border-border">
